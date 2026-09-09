@@ -30,7 +30,7 @@ def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
             Button("Competitors", data_view="competitors", cls="nav-button"),
             Button("Market map", data_view="map", cls="nav-button"),
             Button("Coverage", data_view="coverage", cls="nav-button"),
-            Button("Evidence", data_view="evidence", cls="nav-button"),
+            Button("Market", data_view="market", cls="nav-button"),
         ),
         Div(
             Label(Span("Market"), Select(Option("All EEA", value=""), id="country"), cls="market-picker"),
@@ -46,17 +46,17 @@ def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
                 cls="panel-head",
             ),
             Div(P("Loading treatment treemap…", cls="empty"), id="treatment-treemap", cls="treatment-treemap"),
-            P("Select a treatment tile to drill into its matching price evidence.", id="treemap-drilldown", cls="treemap-drilldown"),
+            P("Select a treatment tile to drill into its matching market prices.", id="treemap-drilldown", cls="treemap-drilldown"),
             Div(Span("Lower price level"), Span(cls="gradient"), Span("Higher price level"), P("Compared within each country and currency"), cls="treemap-legend"),
             cls="panel view-panel", data_panel="overview",
         ),
         Section(
             Div(
-                _heading("LATEST EVIDENCE", "Observed services & prices"),
+                _heading("LATEST MARKET", "Observed services & prices"),
                 Input(id="price-search", cls="compact-input", placeholder="Filter service or clinic"),
                 cls="panel-head",
             ),
-            _table(("Competitor", "Offering", "Price", "Type", "Market", "Evidence"), "prices"),
+            _table(("Competitor", "Offering", "Price", "Type", "Country", "Market"), "prices"),
             cls="panel view-panel", data_panel="overview",
         ),
     )
@@ -67,18 +67,18 @@ def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
             cls="panel-head",
         ),
         Div(id="country-filter-bar", cls="country-filter-bar", aria_label="Filter competitors by country"),
-        _table(("Competitor", "Market", "Locations", "Offerings", "Evidence", "Last observed"), "competitors"),
+        _table(("Competitor", "Country", "Locations", "Offerings", "Market", "Last observed"), "competitors"),
         cls="panel view-panel hidden", data_panel="competitors",
     )
     market_map = Section(
         Div(
             _heading("CLINIC LOCATIONS", "Market map"),
-            Span("OpenStreetMap · select a marker for provider evidence", cls="panel-note"),
+            Span("OpenStreetMap · select a marker for provider market data", cls="panel-note"),
             cls="panel-head",
         ),
         Div(id="market-map-summary", cls="market-map-summary"),
         Div(id="market-map", cls="market-map", role="region", aria_label="Interactive competitor clinic map"),
-        P("Location records retain their original evidence URL. Map tiles © OpenStreetMap contributors.", cls="map-attribution-note"),
+        P("Location records retain their original source URL. Map tiles © OpenStreetMap contributors.", cls="map-attribution-note"),
         cls="panel view-panel hidden", data_panel="map",
     )
     coverage = Section(
@@ -90,17 +90,17 @@ def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
         _table(("Candidate", "Market", "State", "Sources", "Last seen"), "candidates"),
         cls="panel view-panel hidden", data_panel="coverage",
     )
-    evidence = Section(
-        Div(_heading("SOURCE REGISTER", "Recent evidence"), Span("Retained snapshots", cls="panel-note"), cls="panel-head"),
-        Div(id="evidence-list", cls="evidence-list"),
+    market = Section(
+        Div(_heading("SOURCE REGISTER", "Recent market data"), Span("Retained snapshots", cls="panel-note"), cls="panel-head"),
+        Div(id="market-list", cls="market-list"),
         Div(_heading("COLLECTION HISTORY", "Recent runs"), cls="subpanel-head"),
         _table(("Run", "Trigger", "Status", "Started", "Result"), "runs"),
-        cls="panel view-panel hidden", data_panel="evidence",
+        cls="panel view-panel hidden", data_panel="market",
     )
     analyst = Aside(
-        Div(Span("✦", cls="assistant-mark"), _heading("FASTCOMPS AI", "Evidence analyst"), Span("LIVE", cls="live-dot"), cls="assistant-head"),
+        Div(Span("✦", cls="assistant-mark"), _heading("FASTCOMPS AI", "Market analyst"), Span("LIVE", cls="live-dot"), cls="assistant-head"),
         Div(
-            Div(P("Ask about this dashboard’s competitors, coverage, treatments or prices. I’ll keep the evidence visible."), cls="assistant-message"),
+            Div(P("Ask about this dashboard’s competitors, coverage, treatments or prices. I’ll keep the market context visible."), cls="assistant-message"),
             Div(
                 Button("Which markets need attention?", type="button"),
                 Button("Compare clinic pricing in Lithuania", type="button"),
@@ -120,12 +120,12 @@ def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
         Main(
             Section(
                 Div(
-                    Div(P("CLINICS · COMPETITIVE INTELLIGENCE", cls="eyebrow"), H1("See the market as evidence, not noise."), P("Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.")),
-                    Div(Span(cls="status-dot"), Span("Connecting to evidence base…", id="sync-status"), cls="sync-pill"),
+                    Div(P("CLINICS · COMPETITIVE INTELLIGENCE", cls="eyebrow"), H1("See the market, not the noise."), P("Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.")),
+                    Div(Span(cls="status-dot"), Span("Connecting to market data…", id="sync-status"), cls="sync-pill"),
                     cls="intro",
                 ),
                 Section(*(Div(cls="skeleton") for _ in range(4)), id="metrics", cls="metrics"),
-                *overview, competitors, market_map, coverage, evidence,
+                *overview, competitors, market_map, coverage, market,
                 cls="content",
             ),
             analyst,

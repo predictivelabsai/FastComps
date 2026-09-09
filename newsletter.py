@@ -126,7 +126,31 @@ def _signal_rows(hours: int, limit: int, *, fresh_only: bool, country: str | Non
     return _benchmark_rows(rows, limit)
 
 
-def _featured_price_rows(country: str, limit: int = 10) -> list[dict]:
+def _sample_featured(rows: list[dict], limit: int, *, seed: int) -> list[dict]:
+    """Sample a daily-changing, clinic-diverse set for the featured market."""
+    rng = random.Random(seed)
+    by_clinic: dict[str, list[dict]] = {}
+    for row in rows:
+        by_clinic.setdefault(str(row.get("competitor_id") or row.get("competitor") or "Clinic"), []).append(row)
+    clinics = list(by_clinic)
+    rng.shuffle(clinics)
+    for values in by_clinic.values():
+        rng.shuffle(values)
+    result: list[dict] = []
+    while clinics and len(result) < limit:
+        next_round = []
+        for clinic in clinics:
+            values = by_clinic[clinic]
+            if values and len(result) < limit:
+                result.append(values.pop())
+            if values:
+                next_round.append(clinic)
+        rng.shuffle(next_round)
+        clinics = next_round
+    return result
+
+
+def _featured_price_rows(country: str, limit: int = 10, *, seed: int) -> list[dict]:
     rows = fetch_all(f"""
         WITH history_ranked AS (
           SELECT c.id AS competitor_id,c.name AS competitor,c.country_code,f.name AS treatment,
@@ -142,20 +166,15 @@ def _featured_price_rows(country: str, limit: int = 10) -> list[dict]:
           JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
           WHERE c.vertical_id='clinics' AND c.country_code=%(country)s
             AND o.price_min>0 AND COALESCE(o.currency,'')<>''
-        ), diversified AS (
-          SELECT *,ROW_NUMBER() OVER (PARTITION BY competitor_id
-            ORDER BY retrieved_at DESC NULLS LAST,treatment) AS clinic_rank
-          FROM history_ranked WHERE history_rank=1 AND price>0
         )
         SELECT competitor_id,competitor,country_code,treatment,mapped_type,price,
           source_url,retrieved_at,fx_effective_date,'EUR'::text AS currency
-        FROM diversified
-        ORDER BY clinic_rank,retrieved_at DESC NULLS LAST,competitor,treatment
-        LIMIT %(limit)s
-    """, {"country": country, "limit": min(20, max(1, limit))})
+        FROM history_ranked WHERE history_rank=1 AND price>0
+        ORDER BY retrieved_at DESC NULLS LAST,competitor,treatment
+    """, {"country": country})
     for row in rows:
         row["treatment_type"] = treatment_type(row.get("treatment"), row.pop("mapped_type", None))
-    return rows
+    return _sample_featured(rows, min(20, max(1, limit)), seed=seed)
 
 
 def _country_mixture(rows: list[dict], limit: int, *, seed: int) -> list[dict]:
@@ -200,9 +219,10 @@ def build_daily_scan(*, hours: int = 36, signal_limit: int = 10) -> dict:
     if fallback:
         candidates = _signal_rows(hours, candidate_limit, fresh_only=False)
     featured_country = "LT"
-    featured_prices = _featured_price_rows(featured_country, 10)
+    daily_seed = int(date.today().strftime("%Y%m%d"))
+    featured_prices = _featured_price_rows(featured_country, 10, seed=daily_seed + 37)
     other_markets = [row for row in candidates if row.get("country_code") != featured_country]
-    signals = _country_mixture(other_markets, signal_limit, seed=int(date.today().strftime("%Y%m%d")))
+    signals = _country_mixture(other_markets, signal_limit, seed=daily_seed + 83)
     fx_dates = [
         str(row["fx_effective_date"])
         for row in featured_prices + signals if row.get("fx_effective_date")
@@ -244,8 +264,14 @@ def unsubscribe(token: str) -> str | None:
             f"UPDATE {SCHEMA}.users SET daily_scan_enabled=FALSE,updated_at=NOW() WHERE lower(email)=%s RETURNING email",
             (email,),
         )
-        row = cur.fetchone()
+        user_row = cur.fetchone()
+        cur.execute(
+            f"UPDATE {SCHEMA}.newsletter_subscribers SET enabled=FALSE,updated_at=NOW() WHERE lower(email)=%s RETURNING email",
+            (email,),
+        )
+        subscriber_row = cur.fetchone()
         conn.commit()
+    row = user_row or subscriber_row
     return str(row[0]) if row else None
 
 
@@ -282,8 +308,8 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
         <tr><td style="padding:9px 8px 9px 0;border-top:1px solid #edf2ef;vertical-align:top"><div style="font-size:10px;color:#177357;font-weight:800">{html.escape(item.get('treatment_type') or 'General medicine & other treatments')}</div><div style="font-size:13px;color:#12241f;font-weight:700;margin-top:3px">{html.escape(item.get('treatment') or 'Treatment')}</div><a href="{source_url}" style="font-size:10px;color:#65756f;text-decoration:none">{html.escape(item.get('competitor') or 'Clinic')} ↗</a></td><td style="padding:9px 0;border-top:1px solid #edf2ef;text-align:right;vertical-align:middle;font-size:13px;color:#12241f;font-weight:800;white-space:nowrap">{html.escape(_money(item.get('price'), 'EUR'))}</td></tr>"""
     scan_date = date.fromisoformat(scan["date"]).strftime("%d %b %Y")
     intro = (
-        f"Fresh evidence retained during the last {scan['hours']} hours."
-        if not scan["fallback"] else "No new evidence landed in the freshness window, so today’s scan shows the latest retained signals."
+        f"Fresh market data retained during the last {scan['hours']} hours."
+        if not scan["fallback"] else "No new market data landed in the freshness window, so today’s scan shows the latest retained signals."
     )
     unsubscribe_url = f"{PUBLIC_URL}/auth/unsubscribe?token={unsubscribe_token(recipient_email)}"
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -294,7 +320,7 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
     <div style="font-size:13px;color:#b7c9c1;margin-top:4px">Daily Clinic Market Scan · 30 EEA markets</div>
     <div style="font-size:11px;color:#7f978d;margin-top:3px">{scan_date}</div>
   </div>
-  <div style="padding:17px 4px 8px"><p style="font-size:13px;color:#445650;line-height:1.6;margin:0">{intro} Every signal below links to its public source. Prices are converted to EUR using <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" style="color:#177357">ECB reference rates</a>{f' effective {html.escape(str(scan["fx_effective_date"]))}' if scan.get('fx_effective_date') else ''}; original prices remain retained as evidence.</p></div>
+  <div style="padding:17px 4px 8px"><p style="font-size:13px;color:#445650;line-height:1.6;margin:0">{intro} Every signal below links to its public source. Prices are converted to EUR using <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" style="color:#177357">ECB reference rates</a>{f' effective {html.escape(str(scan["fx_effective_date"]))}' if scan.get('fx_effective_date') else ''}; original prices remain retained in market history.</p></div>
   <table role="presentation" style="border-collapse:collapse;width:100%;table-layout:fixed;margin:5px -5px 14px"><tr>{cards}</tr></table>
   <div style="background:#fff;border:1px solid #dce7e2;border-radius:10px;padding:14px;margin-bottom:14px">
     <div style="font-size:10px;color:#177357;font-weight:800;letter-spacing:.7px">FEATURED COUNTRY · 🇱🇹 LITHUANIA</div>
@@ -304,7 +330,7 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
   </div>
   <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Country · treatment type · treatment map</div></div>
   <a href="{PUBLIC_URL}/dashboard" style="display:block;margin-bottom:14px"><img src="cid:fastcomps-market-map" alt="Daily country, treatment type and treatment price map" width="1200" style="display:block;width:100%;height:auto;border:0;border-radius:9px"></a>
-  <div style="font-size:10px;color:#65756f;margin:-6px 3px 15px">Image unavailable? The evidence cards below follow the same country → treatment type → treatment hierarchy.</div>
+  <div style="font-size:10px;color:#65756f;margin:-6px 3px 15px">Image unavailable? The market cards below follow the same country → treatment type → treatment hierarchy.</div>
   <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Other EEA comparisons · {len(scan['signals'])} signals</div></div>
   {signals or '<p style="color:#65756f;font-size:12px">No retained signals are available yet.</p>'}
   <div style="text-align:center;margin-top:20px;padding:17px 0;border-top:1px solid #dce7e2">
@@ -341,10 +367,14 @@ def render_daily_scan_text(scan: dict) -> str:
 
 def registered_recipients() -> list[str]:
     with connection(read_only=True) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(f"""SELECT DISTINCT lower(email) AS email FROM {SCHEMA}.users
-            WHERE email IS NOT NULL AND email<>'' AND daily_scan_enabled=TRUE
-              AND (email_verified=TRUE OR google_sub IS NOT NULL OR password_hash IS NULL)
-            ORDER BY email""")
+        cur.execute(f"""SELECT email FROM (
+              SELECT lower(email) AS email FROM {SCHEMA}.users
+              WHERE email IS NOT NULL AND email<>'' AND daily_scan_enabled=TRUE
+                AND (email_verified=TRUE OR google_sub IS NOT NULL OR password_hash IS NULL)
+              UNION
+              SELECT lower(email) AS email FROM {SCHEMA}.newsletter_subscribers
+              WHERE enabled=TRUE AND email<>''
+            ) recipients ORDER BY email""")
         return [str(row["email"]) for row in cur.fetchall()]
 
 

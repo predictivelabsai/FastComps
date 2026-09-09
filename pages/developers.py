@@ -14,9 +14,9 @@ RESOURCES = (
     ("Competitors", "Search verified clinic competitors and their attributable footprint.", "GET", "/api/competitors"),
     ("Competitor detail", "Drill into a provider’s locations, treatment prices and relative price levels.", "GET", "/api/competitors/{competitor_id}"),
     ("Clinic locations", "Read geocoded, source-backed provider locations used by the market map.", "GET", "/api/locations"),
-    ("Price observations", "Read captured treatments, prices, currencies and readable evidence links.", "GET", "/api/observations"),
-    ("Coverage", "Inspect collection status and evidence depth across all 30 EEA markets.", "GET", "/api/coverage"),
-    ("Evidence register", "Review retained public sources and freshness metadata.", "GET", "/api/evidence"),
+    ("Price observations", "Read captured treatments, prices, currencies and readable market links.", "GET", "/api/observations"),
+    ("Coverage", "Inspect collection status and market depth across all 30 EEA markets.", "GET", "/api/coverage"),
+    ("Market register", "Review retained public sources and freshness metadata.", "GET", "/api/market"),
     ("Conversation stream", "Stream governed analysis as progress, plan, visual, token, citation and completion events.", "POST", "/api/assistant/stream"),
     ("Conversations", "List the signed-in user’s persisted chat history.", "GET", "/api/threads"),
 )
@@ -38,7 +38,7 @@ def developer_page(user: dict | None = None, threads: list[dict] | None = None, 
             H1("Build with source-backed clinic intelligence."),
             P(
                 "Use the same governed, read-only data surface that powers FastComps. "
-                "Every observation retains its public evidence URL; raw SQL and internal database infrastructure are never exposed.",
+                "Every observation retains its public source URL; raw SQL and internal database infrastructure are never exposed.",
                 cls="dev-lede",
             ),
             Nav(

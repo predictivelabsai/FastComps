@@ -40,6 +40,7 @@ def test_daily_scan_email_uses_superia_card_pattern_and_safe_sources():
     assert "Country · treatment type · treatment map" in output
     assert "Coverage watch" not in output
     assert "Unmapped" not in output
+    assert "evidence" not in output.lower()
     assert "/auth/unsubscribe?token=" in output
 
 
@@ -109,3 +110,16 @@ def test_benchmarks_require_different_clinics_and_group_safe_synonyms():
     assert result[0]["highest_clinic"] == "UnaVita"
     assert result[0]["lowest_clinic"] != result[0]["highest_clinic"]
     assert result[0]["clinic_count"] == 2
+
+
+def test_featured_sampling_is_daily_stable_and_changes_by_seed():
+    rows = [
+        {"competitor_id": f"clinic-{index % 4}", "treatment": f"Treatment {index}"}
+        for index in range(24)
+    ]
+    first = newsletter._sample_featured(rows, 10, seed=20260909)
+    repeated = newsletter._sample_featured(rows, 10, seed=20260909)
+    next_day = newsletter._sample_featured(rows, 10, seed=20260910)
+    assert [row["treatment"] for row in first] == [row["treatment"] for row in repeated]
+    assert [row["treatment"] for row in first] != [row["treatment"] for row in next_day]
+    assert len({row["competitor_id"] for row in first[:4]}) == 4

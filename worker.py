@@ -12,11 +12,15 @@ import os
 import socket
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time as clock_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from psycopg2.extras import RealDictCursor
 
-from config import DAILY_SCAN_ENABLED, DAILY_SCAN_HOUR_UTC, SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS
+from config import (
+    DAILY_SCAN_ENABLED, DAILY_SCAN_HOUR_LOCAL, DAILY_SCAN_TIMEZONE,
+    SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS,
+)
 from db import SCHEMA, connection, init_db
 from migration import sync_fastclinic
 from fx import sync_exchange_rates
@@ -24,6 +28,17 @@ from fx import sync_exchange_rates
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("fastcomps.worker")
 OWNER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+
+
+def next_daily_scan(now_utc: datetime) -> datetime:
+    """Return the next 08:00 Europe/Vilnius send, including DST changes."""
+    zone = ZoneInfo(DAILY_SCAN_TIMEZONE)
+    local_now = now_utc.astimezone(zone)
+    local_day: date = local_now.date()
+    candidate = datetime.combine(local_day, clock_time(DAILY_SCAN_HOUR_LOCAL), tzinfo=zone)
+    if candidate <= local_now:
+        candidate = datetime.combine(local_day + timedelta(days=1), clock_time(DAILY_SCAN_HOUR_LOCAL), tzinfo=zone)
+    return candidate.astimezone(timezone.utc)
 
 
 def acquire_lease(seconds: int = 90) -> bool:
@@ -69,10 +84,7 @@ def run_forever() -> None:
     init_db()
     next_sync = 0.0
     next_fx_sync = 0.0
-    now_utc = datetime.now(timezone.utc)
-    next_scan = now_utc.replace(hour=DAILY_SCAN_HOUR_UTC, minute=0, second=0, microsecond=0)
-    if next_scan <= now_utc:
-        next_scan += timedelta(days=1)
+    next_scan = next_daily_scan(datetime.now(timezone.utc))
     while True:
         if not acquire_lease():
             time.sleep(WORKER_POLL_SECONDS); continue
@@ -97,7 +109,7 @@ def run_forever() -> None:
                 log.info("Daily scan sent=%s/%s", result.get("sent"), result.get("total"))
             except Exception:
                 log.exception("Scheduled daily scan failed")
-            next_scan += timedelta(days=1)
+            next_scan = next_daily_scan(datetime.now(timezone.utc) + timedelta(seconds=1))
         if not process_one_job():
             time.sleep(WORKER_POLL_SECONDS)
 

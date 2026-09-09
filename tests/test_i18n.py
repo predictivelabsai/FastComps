@@ -32,7 +32,7 @@ def test_accept_language_selects_lithuanian_on_first_visit():
     page = client.get("/", headers={"Accept-Language": "lt-LT,lt;q=0.9,en;q=0.5"})
     assert page.status_code == 200
     assert 'lang="lt"' in page.text
-    assert "Matykite klinikų rinką kaip įrodymus" in page.text
+    assert "Matykite klinikų rinką, o ne triukšmą" in page.text
 
 
 def test_language_return_path_rejects_external_redirects():

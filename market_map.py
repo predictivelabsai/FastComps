@@ -54,7 +54,7 @@ def render_market_map_png(scan: dict) -> bytes:
     draw.rounded_rectangle((18, 18, WIDTH - 18, HEIGHT - 18), radius=22, fill="#ffffff", outline="#d8e5df", width=2)
     draw.text((48, 42), "DAILY COMPARABLE-PRICE MAP", font=_font(18, bold=True), fill="#177357")
     draw.text((48, 72), "Country  ›  treatment type  ›  treatment", font=_font(30, bold=True), fill="#12241f")
-    draw.text((48, 113), "Published EUR price evidence; comparison ranges use different clinics.", font=_font(16), fill="#65756f")
+    draw.text((48, 113), "Published EUR market prices; comparison ranges use different clinics.", font=_font(16), fill="#65756f")
 
     countries: OrderedDict[str, list[dict]] = OrderedDict()
     featured_types: OrderedDict[str, list[dict]] = OrderedDict()
@@ -120,7 +120,7 @@ def render_market_map_png(scan: dict) -> bytes:
                     draw.text((x + 15, max(cy + 45, cy2 - 22)), prices, font=_font(13, bold=True), fill="#533f24")
                 x = x2 + gap
 
-    draw.text((48, HEIGHT - 45), "FastComps · Source-backed clinic market intelligence · Open the dashboard for full evidence", font=_font(14), fill="#65756f")
+    draw.text((48, HEIGHT - 45), "FastComps · Source-backed clinic market intelligence · Open the dashboard for full market detail", font=_font(14), fill="#65756f")
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return output.getvalue()

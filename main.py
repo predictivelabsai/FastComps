@@ -188,8 +188,13 @@ def api_treemap(country: str | None = None, limit: int = 700):
     return repository.treatment_treemap(_country(country), limit)
 
 
-@app.get("/api/evidence")
-def api_evidence(country: str | None = None, limit: int = 30): return repository.evidence(_country(country),limit)
+@app.get("/api/market")
+def api_market(country: str | None = None, limit: int = 30): return repository.evidence(_country(country),limit)
+
+
+@app.get("/api/evidence", include_in_schema=False)
+def api_evidence_legacy(country: str | None = None, limit: int = 30):
+    return repository.evidence(_country(country), limit)
 
 
 @app.get("/api/candidates")

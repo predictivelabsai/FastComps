@@ -121,7 +121,7 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
         Main(
             Section(
                 P("INTELLIGENCE · CROSS-CLINIC BENCHMARKS", cls="eyebrow"),
-                H1("Daily evidence scan"),
+                H1("Daily market scan"),
                 P(
                     "A country-first view of comparable published treatment prices. "
                     "Every lowest and highest endpoint comes from a different clinic and links to its source."

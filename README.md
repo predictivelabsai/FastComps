@@ -2,7 +2,7 @@
 
 Source-backed competitive intelligence for clinics across all 30 EEA markets.
 
-FastComps is a chat-first application with a separate evidence dashboard. It shares FastClinic's PostgreSQL server but owns the isolated `fast_comps` schema. FastClinic remains the system collecting its Market data; FastComps mirrors all 18 Market tables losslessly and projects them into an extensible model for verticals, competitors, locations, categories, services/products, observations, sources, candidates, campaigns and watchlists.
+FastComps is a chat-first application with a separate market dashboard. It shares FastClinic's PostgreSQL server but owns the isolated `fast_comps` schema. FastClinic remains the system collecting its Market data; FastComps mirrors all 18 Market tables losslessly and projects them into an extensible model for verticals, competitors, locations, categories, services/products, observations, sources, candidates, campaigns and watchlists.
 
 ## Architecture
 
@@ -25,14 +25,14 @@ python migration.py
 uvicorn main:app --host 0.0.0.0 --port 5063
 ```
 
-Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic evidence summaries. Google sign-in uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`. Email/password registration and recovery use `POSTMARK_API_TOKEN` and `FROM_EMAIL`. A strong, randomly generated `SESSION_SECRET` is mandatory.
+Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic market summaries. Google sign-in uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`. Email/password registration and recovery use `POSTMARK_API_TOKEN` and `FROM_EMAIL`. A strong, randomly generated `SESSION_SECRET` is mandatory.
 
 ## Product surfaces
 
 - `/`: public product landing for anonymous visitors; central streamed conversation workspace with persisted history after sign-in.
-- `/dashboard`: market overview, competitor, OpenStreetMap, coverage and evidence views; this is the only surface with the compact Evidence Analyst. Country flag filters are URL-addressable and shared across the dashboard.
-- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country EUR-relative price colour. Selecting a treatment drills into its retained price evidence.
-- `/competitors/{competitor_id}`: provider footprint, clinic locations and published treatment prices with relative market-level bands and direct evidence links.
+- `/dashboard`: market overview, competitor, OpenStreetMap, coverage and market views; this is the only surface with the compact Market Analyst. Country flag filters are URL-addressable and shared across the dashboard.
+- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country EUR-relative price colour. Selecting a treatment drills into its retained market prices.
+- `/competitors/{competitor_id}`: provider footprint, clinic locations and published treatment prices with relative market-level bands and direct market links.
 - `/developers`: public developer guide, API resource catalogue, quick starts and links to public Swagger, ReDoc and versioned OpenAPI contracts. Data calls remain authenticated.
 - `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
 
@@ -40,7 +40,7 @@ English, Estonian and Lithuanian are available from the flag selector on every p
 
 ## Daily Clinic Market Scan
 
-The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). Lithuania is the default featured country with ten sourced treatment prices and a country-filtered dashboard CTA, followed by a deterministic daily shuffle of other EEA markets. Comparable-treatment benchmarks are admitted only when at least two distinct clinics publish positive prices; LOWEST and HIGHEST can never repeat the same clinic. Every clinic endpoint links directly to its evidence. Each email embeds a server-rendered PNG of the country → treatment type → treatment comparison map, while the authenticated Daily Scan portal renders the expanded featured market and full hierarchy as an interactive Plotly treemap with drill-down. A six-hour ingester persists the ECB daily reference table and all displayed prices are converted to EUR; original currency amounts remain retained for audit. Unpriced, zero-priced and single-clinic records remain retained for future scans but are excluded from comparisons, as is operational coverage-queue reporting. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
+The worker sends a Superia-inspired daily email at 08:00 `Europe/Vilnius` time, with daylight-saving changes handled automatically. Lithuania is the default featured country with a clinic-diverse daily sample of ten sourced treatment prices and a country-filtered dashboard CTA, followed by a stable-per-day random sample of other EEA markets. Comparable-treatment benchmarks are admitted only when at least two distinct clinics publish positive prices; LOWEST and HIGHEST can never repeat the same clinic. Every clinic endpoint links directly to its source. Each email embeds a server-rendered PNG of the country → treatment type → treatment comparison map, while the authenticated Daily Scan portal renders the expanded featured market and full hierarchy as an interactive Plotly treemap with drill-down. A six-hour ingester persists the ECB daily reference table and all displayed prices are converted to EUR; original currency amounts remain retained for audit. Unpriced, zero-priced and single-clinic records remain retained for future scans but are excluded from comparisons, as is operational coverage-queue reporting. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link. The initial subscriber list is `kaljuvee@gmail.com` and `mj@1am.lt`; it can be overridden with `INITIAL_DAILY_SCAN_RECIPIENTS`.
 
 ```bash
 python -m scripts.daily_scan --dry-run
@@ -61,7 +61,7 @@ Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling t
 - `GET /api/locations`
 - `GET /api/categories`
 - `GET /api/treemap`
-- `GET /api/evidence`
+- `GET /api/market`
 - `GET /api/candidates`
 - `GET /api/watchlist`
 - `GET /api/runs`

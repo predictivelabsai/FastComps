@@ -51,7 +51,7 @@ def chat_page(user: dict, threads: list[dict], messages: list[dict], *, thread_i
         Span("✦", cls="assistant-orb"),
         P("FASTCOMPS AI", cls="eyebrow"),
         H1("What do you want to know about the clinic market?"),
-        P("Ask about competitors, treatments, published prices, market coverage or retained evidence."),
+        P("Ask about competitors, treatments, published prices, market coverage or retained market data."),
         Div(
             Button("Compare clinic pricing in Lithuania", type="button"),
             Button("Which EEA markets need attention?", type="button"),

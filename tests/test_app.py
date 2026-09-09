@@ -42,7 +42,7 @@ def test_chat_workspace_contract(signed_in):
     assert "New Chat" in response.text
     assert "What do you want to know about the clinic market?" in response.text
     assert "/static/chat.js" in response.text
-    assert "Evidence analyst" not in response.text
+    assert "Market analyst" not in response.text
     assert "analyst@example.com" in response.text
     assert "Sign out" in response.text
 
@@ -50,7 +50,7 @@ def test_chat_workspace_contract(signed_in):
 def test_dashboard_contract(signed_in):
     response = signed_in.get("/dashboard")
     assert response.status_code == 200
-    assert "Evidence analyst" in response.text
+    assert "Market analyst" in response.text
     assert "30 EEA MARKETS" in response.text
     assert "Priority watchlist" in response.text
     assert "Candidate queue" in response.text
@@ -61,6 +61,7 @@ def test_dashboard_contract(signed_in):
     assert "country-filter-bar" in response.text
     assert "leaflet@1.9.4" in response.text
     assert 'href="/daily-scan"' in response.text
+    assert "Evidence" not in response.text
 
 
 def test_daily_scan_page_contract(monkeypatch, signed_in):
@@ -81,7 +82,7 @@ def test_daily_scan_page_contract(monkeypatch, signed_in):
     })
     response = signed_in.get("/daily-scan")
     assert response.status_code == 200
-    assert "Daily evidence scan" in response.text
+    assert "Daily market scan" in response.text
     assert "Clinic A" in response.text and "Clinic B" in response.text
     assert "Featured Clinic" in response.text
     assert "Explore Lithuania on the dashboard" in response.text
@@ -92,7 +93,8 @@ def test_daily_scan_page_contract(monkeypatch, signed_in):
     assert "plotly-2.35.2.min.js" in response.text
     assert "data:image/png;base64," not in response.text
     assert 'href="/daily-scan" class="side-link active"' in response.text
-    assert "Evidence analyst" not in response.text
+    assert "Market analyst" not in response.text
+    assert "Evidence" not in response.text
 
 
 def test_developer_portal_contract(signed_in):
@@ -108,7 +110,7 @@ def test_developer_portal_contract(signed_in):
 def test_public_landing_contract():
     response = client.get("/")
     assert response.status_code == 200
-    assert "See the clinic market as evidence, not noise" in response.text
+    assert "See the clinic market, not the noise" in response.text
     assert "/static/product-demo.gif" in response.text
     assert 'href="/developers"' in response.text
     assert 'href="/auth/sign-in"' in response.text
@@ -116,6 +118,7 @@ def test_public_landing_contract():
     assert "application/ld+json" in response.text
     assert "normalised prices" in response.text
     assert "source tables" not in response.text
+    assert "Evidence" not in response.text
 
 
 def test_developer_portal_and_schemas_are_public():
@@ -127,6 +130,8 @@ def test_developer_portal_and_schemas_are_public():
     assert client.get("/api/openapi/v1.json").status_code == 200
     assert client.get("/swagger.json").status_code == 200
     schema = client.get("/api/openapi.json").json()
+    assert "/api/market" in schema["paths"]
+    assert "/api/evidence" not in schema["paths"]
     assert "/auth/sign-in" not in schema["paths"]
     assert "/developers" not in schema["paths"]
 
@@ -238,7 +243,7 @@ def test_competitor_detail_page_and_api(monkeypatch, signed_in):
     data = {
         "competitor": {
             "id": "clinic-1", "name": "Example Clinic", "country_code": "EE",
-            "website_url": "https://clinic.example", "description": "Evidence-backed clinic.",
+            "website_url": "https://clinic.example", "description": "Market-backed clinic.",
             "locations": 1, "offerings": 1, "observations": 1,
         },
         "locations": [{
@@ -270,6 +275,12 @@ def test_operational_read_endpoints(monkeypatch, signed_in):
     assert signed_in.get("/api/candidates").json()[0]["state"] == "discovered"
     assert signed_in.get("/api/watchlist").json()[0]["name"] == "SYNC"
     assert signed_in.get("/api/runs").json()[0]["status"] == "completed"
+
+
+def test_market_endpoint_delegates_and_legacy_alias_remains(monkeypatch, signed_in):
+    monkeypatch.setattr(main.repository, "evidence", lambda *args: [{"provider": "Clinic"}])
+    assert signed_in.get("/api/market").json()[0]["provider"] == "Clinic"
+    assert signed_in.get("/api/evidence").json()[0]["provider"] == "Clinic"
 
 
 def test_assistant_request(monkeypatch, signed_in):

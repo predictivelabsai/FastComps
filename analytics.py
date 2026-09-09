@@ -392,7 +392,7 @@ def execute_plan(plan: AnalysisPlan, lang: str = "en") -> dict[str, Any]:
             "rows": public_rows[:10],
         },
         "citations": _citations(plan),
-        "evidence": {
+        "market": {
             "records": evidence_count, "sources": source_count, "latest_at": latest,
             "coverage": coverage_counts, "markets": len(coverage_rows),
         },

@@ -83,14 +83,14 @@ async function loadOverview() {
   const data = await get('/api/overview', { country: state.country });
   const cards = [
     [tr('Verified competitors'), data.competitors, tr('Grounded provider records')],
-    [tr('Clinic locations'), data.locations, tr('Address-evidenced branches')],
+    [tr('Clinic locations'), data.locations, tr('Mapped clinic branches')],
     [tr('Price observations'), data.priced_observations, `${data.observations} ${tr('total observations')}`],
-    [tr('Retained sources'), data.sources, tr('Auditable evidence pages')],
+    [tr('Retained sources'), data.sources, tr('Auditable market pages')],
   ];
   $('#metrics').innerHTML = cards.map(card => `<article class="metric"><span class="metric-label">${card[0]}</span><strong>${Number(card[1]).toLocaleString()}</strong><small>${card[2]}</small></article>`).join('');
   const sync = data.sync || {};
   $('#sync-status').textContent = sync.status === 'complete'
-    ? tr('Evidence synced {date}', { date: date(sync.last_completed_at) })
+    ? tr('Market synced {date}', { date: date(sync.last_completed_at) })
     : tr('Sync {status}', { status: tr((sync.status || 'pending').replaceAll('_', ' ')) });
 }
 
@@ -172,7 +172,7 @@ async function loadTreemap() {
     setCountry(country, false);
     $('#price-search').value = treatment;
     loadPrices(treatment);
-    $('#treemap-drilldown').textContent = `${flag(country)} ${country} · ${tr('price evidence for')} “${treatment}”`;
+    $('#treemap-drilldown').textContent = `${flag(country)} ${country} · ${tr('market prices for')} “${treatment}”`;
     $('#prices').closest('.panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
@@ -213,9 +213,9 @@ function renderCoverage(rows) {
 }
 async function loadCoverage() { renderCoverage(await get('/api/coverage')); }
 
-async function loadEvidence() {
-  const rows = await get('/api/evidence', { country: state.country, limit: 60 });
-  $('#evidence-list').innerHTML = rows.length ? rows.map(item => `<article class="evidence-item"><span class="evidence-market">${esc(item.country_code || 'EEA')}</span><div><a href="${safeUrl(item.url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(item.url, item.display_url))}</a><p>${esc(item.excerpt || `${item.provider || tr('Source')} ${tr('evidence')}`)}</p></div><span class="evidence-time">${date(item.retrieved_at)}</span></article>`).join('') : `<p class="empty">${esc(tr('No retained sources for this filter.'))}</p>`;
+async function loadMarket() {
+  const rows = await get('/api/market', { country: state.country, limit: 60 });
+  $('#market-list').innerHTML = rows.length ? rows.map(item => `<article class="market-item"><span class="market-market">${esc(item.country_code || 'EEA')}</span><div><a href="${safeUrl(item.url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(item.url, item.display_url))}</a><p>${esc(item.excerpt || `${item.provider || tr('Source')} ${tr('market')}`)}</p></div><span class="market-time">${date(item.retrieved_at)}</span></article>`).join('') : `<p class="empty">${esc(tr('No retained sources for this filter.'))}</p>`;
 }
 
 async function loadCandidates() {
@@ -236,13 +236,13 @@ async function loadRuns() {
 async function refresh() {
   await Promise.all([
     loadOverview(), loadPrices($('#price-search').value), loadCompetitors($('#competitor-search').value),
-    loadTreemap(), loadMap(), loadEvidence(), loadCandidates(), loadWatchlist(), loadRuns(),
+    loadTreemap(), loadMap(), loadMarket(), loadCandidates(), loadWatchlist(), loadRuns(),
   ]);
   if (state.view === 'coverage') await loadCoverage();
 }
 
 function selectView(view, updateHash = true) {
-  state.view = ['overview', 'competitors', 'map', 'coverage', 'evidence'].includes(view) ? view : 'overview';
+  state.view = ['overview', 'competitors', 'map', 'coverage', 'market'].includes(view) ? view : 'overview';
   $$('.nav-button').forEach(button => button.classList.toggle('active', button.dataset.view === state.view));
   $$('.view-panel').forEach(panel => panel.classList.toggle('hidden', panel.dataset.panel !== state.view));
   if (updateHash) updateUrl();
@@ -283,7 +283,7 @@ function renderVisual(card, data) {
   const max = Math.max(...rows.map(row => Math.abs(Number(row.value))), 1);
   const host = document.createElement('div');
   host.className = 'analysis-visual';
-  host.innerHTML = `<div class="analysis-visual-head"><strong>${esc(data.title || tr('Governed analysis'))}</strong><span>${Number(data.evidence?.records || 0).toLocaleString(locale)} ${esc(tr('records'))}</span></div><div class="analysis-bars">${rows.map(row => `<div class="analysis-bar"><span title="${esc(row.label)}">${esc(row.label)}</span><i><b style="width:${Math.max(3, Math.abs(Number(row.value)) / max * 100)}%"></b></i><em>${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(Number(row.value))}</em></div>`).join('')}</div>`;
+  host.innerHTML = `<div class="analysis-visual-head"><strong>${esc(data.title || tr('Governed analysis'))}</strong><span>${Number(data.market?.records || 0).toLocaleString(locale)} ${esc(tr('records'))}</span></div><div class="analysis-bars">${rows.map(row => `<div class="analysis-bar"><span title="${esc(row.label)}">${esc(row.label)}</span><i><b style="width:${Math.max(3, Math.abs(Number(row.value)) / max * 100)}%"></b></i><em>${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(Number(row.value))}</em></div>`).join('')}</div>`;
   card.appendChild(host);
 }
 function renderCitations(card, items) {
@@ -350,7 +350,7 @@ $('#assistant-form').addEventListener('submit', async event => {
     }
   } catch {
     card.querySelector('.stream-progress').hidden = true;
-    card.querySelector('.answer-text').textContent = tr('I could not complete that analysis just now. The dashboard evidence remains available.');
+    card.querySelector('.answer-text').textContent = tr('I could not complete that analysis just now. The dashboard market data remains available.');
   } finally {
     button.disabled = false;
     feed.scrollTop = feed.scrollHeight;
@@ -358,6 +358,6 @@ $('#assistant-form').addEventListener('submit', async event => {
 });
 
 Promise.all([loadMarkets(), refresh()]).catch(error => {
-  $('#sync-status').textContent = tr('Evidence connection unavailable');
+  $('#sync-status').textContent = tr('Market connection unavailable');
   console.error(error);
 });

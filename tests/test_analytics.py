@@ -78,8 +78,8 @@ def test_stream_contract_contains_no_sql(monkeypatch):
         lambda _, lang="en": {
             "summary": "Estonia has a coverage gap.",
             "visual": {"kind": "bar", "title": "Coverage gap", "rows": [{"label": "EE", "value": 4}]},
-            "citations": [{"label": "Clinic source", "url": "https://example.test/evidence"}],
-            "evidence": {"records": 6, "sources": 1, "markets": 30},
+            "citations": [{"label": "Clinic source", "url": "https://example.test/market"}],
+            "market": {"records": 6, "sources": 1, "markets": 30},
         },
     )
 

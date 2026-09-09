@@ -15,6 +15,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
+from config import INITIAL_DAILY_SCAN_RECIPIENTS
+
 
 def _schema_env(name: str, default: str) -> str:
     value = os.getenv(name, default)
@@ -232,6 +234,10 @@ CREATE TABLE IF NOT EXISTS fast_comps.newsletter_deliveries (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scan_date DATE NOT NULL, email TEXT NOT NULL,
  status TEXT NOT NULL CHECK (status IN ('sent','failed')), message_id TEXT, error TEXT,
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(scan_date,email));
+CREATE TABLE IF NOT EXISTS fast_comps.newsletter_subscribers (
+ email TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE,
+ source TEXT NOT NULL DEFAULT 'initial', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS fast_comps.user_sessions (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES fast_comps.users(id) ON DELETE CASCADE,
  token_hash TEXT UNIQUE NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
@@ -272,6 +278,10 @@ def init_db() -> None:
             (currency,units_per_eur,effective_date,source_url)
             VALUES ('EUR',1,DATE '1970-01-01','https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml')
             ON CONFLICT (currency) DO NOTHING""")
+        cur.executemany(f"""INSERT INTO {SCHEMA}.newsletter_subscribers (email,enabled,source)
+            VALUES (%s,TRUE,'initial')
+            ON CONFLICT (email) DO NOTHING""",
+            [(email,) for email in INITIAL_DAILY_SCAN_RECIPIENTS])
         conn.commit()
 
 

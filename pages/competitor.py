@@ -50,7 +50,7 @@ def competitor_page(user: dict, threads: list[dict], data: dict, *, lang: str = 
         Div(
             P("CLINIC COMPETITOR", cls="eyebrow"),
             H1(competitor["name"]),
-            P(competitor.get("description") or "Verified clinic competitor with retained market evidence.", cls="detail-lede"),
+            P(competitor.get("description") or "Verified clinic competitor with retained market data.", cls="detail-lede"),
             A("Visit official website ↗", href=website, target="_blank", rel="noopener noreferrer", cls="detail-site") if website else None,
         ),
         Div(
@@ -79,8 +79,8 @@ def competitor_page(user: dict, threads: list[dict], data: dict, *, lang: str = 
         for row in data["locations"]
     )
     locations = Section(
-        Div(P("ADDRESS EVIDENCE", cls="eyebrow"), H2("Location register"), cls="panel-head"),
-        Div(Table(Thead(Tr(Th("Location"), Th("Address"), Th("Phone"), Th("Evidence"))), Tbody(*location_rows)), cls="table-wrap") if location_rows else P("No location records yet.", cls="empty"),
+        Div(P("ADDRESS MARKET", cls="eyebrow"), H2("Location register"), cls="panel-head"),
+        Div(Table(Thead(Tr(Th("Location"), Th("Address"), Th("Phone"), Th("Market source"))), Tbody(*location_rows)), cls="table-wrap") if location_rows else P("No location records yet.", cls="empty"),
         cls="panel detail-panel",
     )
     price_rows = tuple(
@@ -95,11 +95,11 @@ def competitor_page(user: dict, threads: list[dict], data: dict, *, lang: str = 
     )
     prices = Section(
         Div(
-            Div(P("PUBLISHED PRICE EVIDENCE", cls="eyebrow"), H2("Treatment price drill-down")),
+            Div(P("PUBLISHED PRICE MARKET", cls="eyebrow"), H2("Treatment price drill-down")),
             Span("Level is relative to published prices in the same country and currency", cls="panel-note"),
             cls="panel-head",
         ),
-        Div(Table(Thead(Tr(Th("Treatment"), Th("Type"), Th("Published price"), Th("Price level"), Th("Evidence"))), Tbody(*price_rows)), cls="table-wrap") if price_rows else P("No published prices retained for this provider yet.", cls="empty"),
+        Div(Table(Thead(Tr(Th("Treatment"), Th("Type"), Th("Published price"), Th("Price level"), Th("Market source"))), Tbody(*price_rows)), cls="table-wrap") if price_rows else P("No published prices retained for this provider yet.", cls="empty"),
         cls="panel detail-panel",
     )
     content = Div(

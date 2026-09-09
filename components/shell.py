@@ -79,7 +79,7 @@ def sidebar(user: dict, threads: list[dict], *, active: str, current_thread: str
             item("daily-scan", "Daily Scan", "/daily-scan", "◈"),
             A(Span("◎"), "Competitors", href="/dashboard#competitors", cls="side-link"),
             A(Span("◫"), "Coverage", href="/dashboard#coverage", cls="side-link"),
-            A(Span("↗"), "Evidence", href="/dashboard#evidence", cls="side-link"),
+            A(Span("↗"), "Market", href="/dashboard#market", cls="side-link"),
             P("Recent chats", cls="side-label"),
             Div(*history, cls="history-list") if history else Div(P("No conversations yet", cls="history-empty"), cls="history-list"),
             cls="side-scroll",

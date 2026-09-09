@@ -39,7 +39,7 @@ TINT = "#f3f7f5"
 CANONICAL_URL = "https://comps.fastsme.com"
 DESCRIPTION = (
     "Track clinic competitors, treatments and published prices across all 30 EEA markets, "
-    "with every claim linked to retained source evidence."
+    "with every claim linked to retained market sources."
 )
 FAVICON = "data:image/svg+xml," + quote(
     """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#177357"/><path fill="white" d="M16 4 28 16 16 28 4 16Z"/><path fill="#177357" d="M10 10h12v4h-7v3h6v4h-6v5h-5Z"/></svg>""",
@@ -97,7 +97,7 @@ def public_footer(lang: str = "en"):
     return Footer(
         Div(
             A(Span("F", cls="lp-mark small"), Strong("FastComps"), href="/", cls="lp-brand"),
-            P("Clinic competitive intelligence with evidence attached."),
+            P("Clinic competitive intelligence with market data attached."),
         ),
         Div(
             A("Developers", href="/developers"),
@@ -131,7 +131,7 @@ def landing_page(lang: str = "en"):
                 Section(
                     Div(
                         P(Span(cls="lp-live-dot"), "COMPETITIVE INTELLIGENCE · 30 EEA MARKETS", cls="lp-kicker"),
-                        H1("See the clinic market as evidence, not noise."),
+                        H1("See the clinic market, not the noise."),
                         P(DESCRIPTION, cls="lp-lede"),
                         Div(
                             A("Start researching", href="/auth/sign-up", cls="lp-primary lp-hero-cta"),
@@ -141,7 +141,7 @@ def landing_page(lang: str = "en"):
                         Div(
                             Div(Strong("30"), Span("EEA markets")),
                             Div(Strong("EUR"), Span("normalised prices")),
-                            Div(Strong("100%"), Span("evidence-linked")),
+                            Div(Strong("100%"), Span("market-linked")),
                             cls="lp-proof",
                         ),
                         cls="lp-hero-copy",
@@ -155,7 +155,7 @@ def landing_page(lang: str = "en"):
                             height="750",
                             loading="eager",
                         ),
-                        P("Live product tour · chat, market map and retained evidence", cls="lp-demo-caption"),
+                        P("Live product tour · chat, market map and retained market data", cls="lp-demo-caption"),
                         cls="lp-demo-frame",
                     ),
                     cls="lp-hero",
@@ -165,7 +165,7 @@ def landing_page(lang: str = "en"):
                         P("ONE WORKSPACE, TRACEABLE ANSWERS", cls="lp-kicker"),
                         H2("Move from a market question to the source behind it."),
                         P(
-                            "FastComps combines streamed conversational analysis with a structured competitor and pricing evidence base. "
+                            "FastComps combines streamed conversational analysis with a structured competitor and pricing market dataset. "
                             "It gives operators the answer, its market context and the trail needed to verify it.",
                             cls="lp-section-lede",
                         ),
@@ -174,7 +174,7 @@ def landing_page(lang: str = "en"):
                     Div(
                         Article(Span("01"), H3("Ask in plain language"), P("Compare treatments, price levels, competitors and coverage without writing a query.")),
                         Article(Span("02"), H3("Explore the market"), P("Use a Plotly treemap to move from country to treatment type and individual treatment.")),
-                        Article(Span("03"), H3("Verify every claim"), P("Open readable clinic pages from observations, evidence registers and answer citations.")),
+                        Article(Span("03"), H3("Verify every claim"), P("Open readable clinic pages from observations, market registers and answer citations.")),
                         cls="lp-feature-grid",
                     ),
                     id="product",
@@ -190,7 +190,7 @@ def landing_page(lang: str = "en"):
                             cls="lp-section-lede",
                         ),
                         Div(
-                            Span("Clinics"), Span("Competitors"), Span("Treatments"), Span("Products"), Span("Published prices"), Span("Evidence"),
+                            Span("Clinics"), Span("Competitors"), Span("Treatments"), Span("Products"), Span("Published prices"), Span("Market"),
                             cls="lp-tags",
                         ),
                         A("Explore the workspace", href="/auth/sign-up", cls="lp-primary"),
@@ -224,7 +224,7 @@ def landing_page(lang: str = "en"):
                 Section(
                     P("START WITH A QUESTION", cls="lp-kicker"),
                     H2("Know what changed—and why it matters."),
-                    P("Create your workspace and turn public clinic-market evidence into decisions."),
+                    P("Create your workspace and turn public clinic-market data into decisions."),
                     Div(
                         A("Create an account", href="/auth/sign-up", cls="lp-primary lp-hero-cta"),
                         A("Sign in", href="/auth/sign-in", cls="lp-signin"),

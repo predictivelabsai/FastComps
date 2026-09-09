@@ -1,4 +1,4 @@
-"""Evidence-grounded public market assistant."""
+"""Market-grounded public market assistant."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _fallback(context: dict, lang: str = "en") -> str:
                 lang, competitor=low["competitor"], offering=low["offering"], price_type=low["price_type"],
                 price=f"{low['price_min']:g}", currency=low["currency"] or "",
             )
-    answer += t("Use the cited evidence links to verify each claim; incomplete countries remain marked as such.", lang)
+    answer += t("Use the cited market links to verify each claim; incomplete countries remain marked as such.", lang)
     return answer
 
 
@@ -43,7 +43,7 @@ def answer(question: str, country: str | None = None, lang: str = "en") -> dict:
     if not XAI_API_KEY:
         return {"answer": _fallback(context, lang), "citations": citations, "model": "deterministic"}
     language = LANGUAGES.get(lang, LANGUAGES["en"])["name"]
-    system = f"""You are the FastComps clinics competitive-intelligence analyst. Answer only from the JSON evidence supplied. Distinguish exact, from, range and unavailable prices. Never imply complete market coverage when coverage_status is not covered. Be concise, state uncertainty, and do not provide medical advice. Do not invent URLs or facts. Reply in {language}."""
+    system = f"""You are the FastComps clinics competitive-intelligence analyst. Answer only from the JSON market data supplied. Distinguish exact, from, range and unavailable prices. Never imply complete market coverage when coverage_status is not covered. Be concise, state uncertainty, and do not provide medical advice. Do not invent URLs or facts. Reply in {language}."""
     payload = {
         "model": XAI_MODEL,
         "temperature": 0.1,
@@ -81,19 +81,19 @@ def stream_answer(question: str, country: str | None = None, lang: str = "en"):
             yield _event("plan", plan.public(lang))
             yield _event("progress", {"stage": "query", "label": t("Aggregating governed market data…", lang), "percent": 42})
             result = execute_plan(plan, lang)
-            yield _event("progress", {"stage": "evidence", "label": t("Linking the result to retained evidence…", lang), "percent": 78})
-            yield _event("visual", result["visual"] | {"evidence": result["evidence"]})
+            yield _event("progress", {"stage": "market", "label": t("Linking the result to retained market…", lang), "percent": 78})
+            yield _event("visual", result["visual"] | {"market": result["market"]})
             for token in _tokens(result["summary"]):
                 yield _event("token", {"token": token, "mode": "analytics"})
             yield _event("citations", {"items": result["citations"]})
-            yield _event("done", {"mode": "analytics", "evidence": result["evidence"]})
+            yield _event("done", {"mode": "analytics", "market": result["market"]})
             return
-        yield _event("progress", {"stage": "evidence", "label": t("Reading the most relevant evidence…", lang), "percent": 48})
+        yield _event("progress", {"stage": "market", "label": t("Reading the most relevant market…", lang), "percent": 48})
         result = answer(question, country, lang)
         for token in _tokens(result["answer"]):
-            yield _event("token", {"token": token, "mode": "evidence"})
+            yield _event("token", {"token": token, "mode": "market"})
         yield _event("citations", {"items": result.get("citations", [])})
-        yield _event("done", {"mode": "evidence", "model": result.get("model")})
+        yield _event("done", {"mode": "market", "model": result.get("model")})
     except Exception:
         yield _event("error", {"message": t("The governed analysis could not be completed just now.", lang)})
         yield _event("done", {"mode": "error"})

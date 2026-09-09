@@ -47,7 +47,9 @@ services:
       POSTMARK_API_TOKEN: ${POSTMARK_API_TOKEN:-}
       FROM_EMAIL: ${FROM_EMAIL:-info@fastsme.com}
       DAILY_SCAN_ENABLED: ${DAILY_SCAN_ENABLED:-true}
-      DAILY_SCAN_HOUR_UTC: ${DAILY_SCAN_HOUR_UTC:-7}
+      DAILY_SCAN_HOUR_LOCAL: ${DAILY_SCAN_HOUR_LOCAL:-8}
+      DAILY_SCAN_TIMEZONE: ${DAILY_SCAN_TIMEZONE:-Europe/Vilnius}
+      INITIAL_DAILY_SCAN_RECIPIENTS: ${INITIAL_DAILY_SCAN_RECIPIENTS:-kaljuvee@gmail.com,mj@1am.lt}
     healthcheck:
       test: ["CMD", "python", "worker_health.py"]
       interval: 30s
