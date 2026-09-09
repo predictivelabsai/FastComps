@@ -81,6 +81,8 @@ def test_public_landing_contract():
     assert 'href="/auth/sign-in"' in response.text
     assert 'href="/auth/sign-up"' in response.text
     assert "application/ld+json" in response.text
+    assert "normalised prices" in response.text
+    assert "source tables" not in response.text
 
 
 def test_developer_portal_and_schemas_are_public():

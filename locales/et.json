@@ -280,7 +280,7 @@
   "{count} geocoded clinic locations {scope}": "{count} geokodeeritud kliiniku asukohta {scope}",
   "in": "riigis",
   "across the EEA": "üle kogu EMP",
-  "source tables": "allikatabelit",
+  "normalised prices": "normaliseeritud hinnad",
   "evidence-linked": "tõenditega seotud",
   "DEVELOPER PLATFORM · API V1": "ARENDUSPLATVORM · API V1",
   "Choose language": "Vali keel",

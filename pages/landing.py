@@ -140,7 +140,7 @@ def landing_page(lang: str = "en"):
                         ),
                         Div(
                             Div(Strong("30"), Span("EEA markets")),
-                            Div(Strong("18"), Span("source tables")),
+                            Div(Strong("EUR"), Span("normalised prices")),
                             Div(Strong("100%"), Span("evidence-linked")),
                             cls="lp-proof",
                         ),
