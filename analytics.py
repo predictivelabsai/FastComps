@@ -195,7 +195,7 @@ def plan_question(question: str, country: str | None = None, *, use_model: bool 
 OBSERVATION_DIMENSIONS = {
     "market": "c.country_code",
     "competitor": "c.name",
-    "category": "COALESCE(cat.name,'Unmapped')",
+    "category": "COALESCE(NULLIF(cat.name,''),'General medicine & other treatments')",
     "offering": "f.name",
     "price_type": "o.price_type",
     "provider": "COALESCE(o.provider,'Unknown')",

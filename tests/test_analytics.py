@@ -56,6 +56,12 @@ def test_query_compiler_parameterises_user_filters():
     assert "LIMIT %(limit)s" in sql
 
 
+def test_category_analytics_never_exposes_unmapped_label():
+    sql, _ = analytics.build_query(analytics.AnalysisPlan("observation_count", "category"))
+    assert "Unmapped" not in sql
+    assert "General medicine & other treatments" in sql
+
+
 def test_median_price_converts_every_currency_to_eur():
     sql, _ = analytics.build_query(analytics.AnalysisPlan("median_price", "market"))
     assert "exchange_rates fx ON fx.currency=o.currency" in sql
