@@ -1,364 +1,213 @@
+"""PostgreSQL storage for FastComps.
+
+FastComps shares a database server with FastClinic but owns the ``fast_comps``
+schema. The source schema is read-only from this application's point of view.
+"""
+
+from __future__ import annotations
+
 import os
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, event, text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+import re
+from contextlib import contextmanager
 
-load_dotenv()
-
-DB_URL = os.environ["DB_URL"]
-SCHEMA = "carhero"
-
-engine = create_engine(DB_URL, pool_pre_ping=True, pool_size=5, max_overflow=10)
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 
 
-@event.listens_for(engine, "connect")
-def set_search_path(dbapi_conn, connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute(f"SET search_path TO {SCHEMA}, public")
-    cursor.close()
+def _schema_env(name: str, default: str) -> str:
+    value = os.getenv(name, default)
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", value):
+        raise RuntimeError(f"Invalid PostgreSQL schema name in {name}")
+    return value
 
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+DB_URL = os.getenv("DB_URL") or os.getenv("DATABASE_URL_PROD")
+SCHEMA = _schema_env("DB_SCHEMA", "fast_comps")
+SOURCE_SCHEMA = _schema_env("SOURCE_DB_SCHEMA", "fast_clinic")
+_pool: ThreadedConnectionPool | None = None
 
 
-class Base(DeclarativeBase):
-    pass
+def database_url() -> str:
+    if not DB_URL:
+        raise RuntimeError("DB_URL or DATABASE_URL_PROD is required")
+    return DB_URL
 
 
-def get_db():
-    db = SessionLocal()
+def pool() -> ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ThreadedConnectionPool(1, int(os.getenv("DB_POOL_MAX", "8")), database_url())
+    return _pool
+
+
+@contextmanager
+def connection(*, dict_rows: bool = False):
+    conn = pool().getconn()
     try:
-        yield db
+        with conn.cursor(cursor_factory=RealDictCursor if dict_rows else None) as cur:
+            cur.execute(f'SET search_path TO "{SCHEMA}", public')
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        db.close()
+        pool().putconn(conn)
 
 
-def init_db():
-    """Create schema and all tables."""
-    with engine.connect() as conn:
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}"))
+DDL = r"""
+CREATE SCHEMA IF NOT EXISTS fast_comps;
+CREATE TABLE IF NOT EXISTS fast_comps.verticals (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, active BOOLEAN NOT NULL DEFAULT TRUE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.markets (
+ country_code CHAR(2) PRIMARY KEY, country_name TEXT NOT NULL, eea BOOLEAN NOT NULL DEFAULT TRUE,
+ priority INTEGER NOT NULL DEFAULT 100, target_competitors INTEGER NOT NULL DEFAULT 10,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.competitors (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), name TEXT NOT NULL,
+ country_code CHAR(2), domain TEXT, website_url TEXT, description TEXT, status TEXT NOT NULL DEFAULT 'verified',
+ source_system TEXT NOT NULL, legacy_table TEXT, legacy_id TEXT, first_seen_at TIMESTAMPTZ,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS competitors_country_idx ON fast_comps.competitors(country_code);
+CREATE INDEX IF NOT EXISTS competitors_domain_idx ON fast_comps.competitors(domain);
+CREATE TABLE IF NOT EXISTS fast_comps.competitor_locations (
+ id TEXT PRIMARY KEY, competitor_id TEXT NOT NULL REFERENCES fast_comps.competitors(id) ON DELETE CASCADE,
+ name TEXT, address TEXT, city TEXT, country_code CHAR(2), postal_code TEXT, phone TEXT, website_url TEXT,
+ latitude NUMERIC(10,7), longitude NUMERIC(10,7), geocode_status TEXT, geocode_source TEXT,
+ evidence TEXT, source_url TEXT, retrieved_at TIMESTAMPTZ, source_system TEXT NOT NULL,
+ legacy_table TEXT, legacy_id TEXT);
+CREATE INDEX IF NOT EXISTS locations_country_idx ON fast_comps.competitor_locations(country_code);
+CREATE TABLE IF NOT EXISTS fast_comps.categories (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id),
+ parent_id TEXT REFERENCES fast_comps.categories(id), level TEXT NOT NULL DEFAULT 'category', name TEXT NOT NULL,
+ source TEXT, version TEXT, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.offerings (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id),
+ offering_type TEXT NOT NULL DEFAULT 'service' CHECK (offering_type IN ('service','product')),
+ name TEXT NOT NULL, original_name TEXT, category_id TEXT REFERENCES fast_comps.categories(id),
+ taxonomy_method TEXT, taxonomy_confidence TEXT, taxonomy_version TEXT,
+ source_system TEXT NOT NULL, legacy_table TEXT, legacy_id TEXT);
+CREATE INDEX IF NOT EXISTS offerings_category_idx ON fast_comps.offerings(category_id);
+CREATE TABLE IF NOT EXISTS fast_comps.competitor_offerings (
+ competitor_id TEXT NOT NULL REFERENCES fast_comps.competitors(id) ON DELETE CASCADE,
+ offering_id TEXT NOT NULL REFERENCES fast_comps.offerings(id) ON DELETE CASCADE,
+ first_seen_at TIMESTAMPTZ, last_seen_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT TRUE,
+ PRIMARY KEY (competitor_id, offering_id));
+CREATE TABLE IF NOT EXISTS fast_comps.collection_runs (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), country_code CHAR(2),
+ trigger_kind TEXT, actor TEXT, status TEXT NOT NULL, scheduled_week TEXT,
+ config JSONB NOT NULL DEFAULT '{}'::jsonb, stats JSONB NOT NULL DEFAULT '{}'::jsonb, error TEXT,
+ started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.sources (
+ id TEXT PRIMARY KEY, run_id TEXT REFERENCES fast_comps.collection_runs(id), country_code CHAR(2), provider TEXT,
+ url TEXT NOT NULL, status TEXT, error TEXT, retrieved_at TIMESTAMPTZ, source_system TEXT NOT NULL,
+ legacy_table TEXT, legacy_id TEXT);
+CREATE INDEX IF NOT EXISTS sources_url_idx ON fast_comps.sources(url);
+CREATE TABLE IF NOT EXISTS fast_comps.source_snapshots (
+ id BIGSERIAL PRIMARY KEY, source_id TEXT NOT NULL REFERENCES fast_comps.sources(id) ON DELETE CASCADE,
+ content JSONB NOT NULL DEFAULT '{}'::jsonb, content_hash TEXT, retrieved_at TIMESTAMPTZ,
+ UNIQUE(source_id, content_hash));
+CREATE TABLE IF NOT EXISTS fast_comps.observations (
+ id TEXT PRIMARY KEY, run_id TEXT REFERENCES fast_comps.collection_runs(id),
+ competitor_id TEXT NOT NULL REFERENCES fast_comps.competitors(id),
+ offering_id TEXT NOT NULL REFERENCES fast_comps.offerings(id), original_name TEXT,
+ price_min NUMERIC(14,2), price_max NUMERIC(14,2), price_type TEXT NOT NULL, currency CHAR(3),
+ source_url TEXT NOT NULL, provider TEXT, evidence TEXT, ownership_evidence TEXT,
+ published_at TIMESTAMPTZ, retrieved_at TIMESTAMPTZ, source_system TEXT NOT NULL,
+ legacy_table TEXT, legacy_id TEXT);
+CREATE INDEX IF NOT EXISTS observations_competitor_idx ON fast_comps.observations(competitor_id);
+CREATE INDEX IF NOT EXISTS observations_offering_idx ON fast_comps.observations(offering_id);
+CREATE INDEX IF NOT EXISTS observations_retrieved_idx ON fast_comps.observations(retrieved_at DESC);
+CREATE TABLE IF NOT EXISTS fast_comps.candidates (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), country_code CHAR(2),
+ candidate_key TEXT, name TEXT, official_domain TEXT, source_url TEXT, source_type TEXT,
+ state TEXT NOT NULL DEFAULT 'discovered', discovered_at TIMESTAMPTZ, last_seen_at TIMESTAMPTZ,
+ reviewed_by TEXT, reviewed_at TIMESTAMPTZ, rejection_reason TEXT,
+ competitor_id TEXT REFERENCES fast_comps.competitors(id), source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE INDEX IF NOT EXISTS candidates_country_state_idx ON fast_comps.candidates(country_code,state);
+CREATE TABLE IF NOT EXISTS fast_comps.candidate_sources (
+ id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES fast_comps.candidates(id) ON DELETE CASCADE,
+ source_url TEXT, source_type TEXT, discovery_query TEXT, title TEXT, evidence TEXT,
+ retrieved_at TIMESTAMPTZ, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.coverage_campaigns (
+ vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id),
+ country_code CHAR(2) NOT NULL REFERENCES fast_comps.markets(country_code),
+ priority INTEGER NOT NULL DEFAULT 100, target INTEGER NOT NULL DEFAULT 10,
+ status TEXT NOT NULL DEFAULT 'not_started', requested_by TEXT, queued_at TIMESTAMPTZ,
+ started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, last_run_id TEXT, error TEXT,
+ source_system TEXT NOT NULL DEFAULT 'fastcomps', updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY (vertical_id,country_code));
+CREATE TABLE IF NOT EXISTS fast_comps.watchlists (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), name TEXT NOT NULL,
+ description TEXT, active BOOLEAN NOT NULL DEFAULT TRUE, source_system TEXT NOT NULL, legacy_id TEXT,
+ created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ);
+CREATE TABLE IF NOT EXISTS fast_comps.watchlist_targets (
+ id TEXT PRIMARY KEY, watchlist_id TEXT NOT NULL REFERENCES fast_comps.watchlists(id) ON DELETE CASCADE,
+ competitor_id TEXT REFERENCES fast_comps.competitors(id), name TEXT NOT NULL, country_code CHAR(2),
+ segment TEXT, cities JSONB NOT NULL DEFAULT '[]'::jsonb, positioning TEXT,
+ capabilities JSONB NOT NULL DEFAULT '[]'::jsonb, scope_score INTEGER, focus_score INTEGER,
+ urls JSONB NOT NULL DEFAULT '[]'::jsonb, active BOOLEAN NOT NULL DEFAULT TRUE, priority INTEGER,
+ origin TEXT, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.collection_jobs (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id),
+ country_code CHAR(2), job_type TEXT NOT NULL, payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+ status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0,
+ available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ,
+ error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS collection_jobs_queue_idx ON fast_comps.collection_jobs(status,available_at);
+CREATE TABLE IF NOT EXISTS fast_comps.worker_leases (
+ name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.sync_state (
+ source_system TEXT PRIMARY KEY, last_started_at TIMESTAMPTZ, last_completed_at TIMESTAMPTZ,
+ status TEXT NOT NULL DEFAULT 'never', table_counts JSONB NOT NULL DEFAULT '{}'::jsonb, error TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.chat_threads (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_key TEXT NOT NULL,
+ title TEXT NOT NULL DEFAULT 'Market question', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.chat_messages (
+ id BIGSERIAL PRIMARY KEY, thread_id UUID NOT NULL REFERENCES fast_comps.chat_threads(id) ON DELETE CASCADE,
+ role TEXT NOT NULL CHECK (role IN ('user','assistant')), content TEXT NOT NULL,
+ citations JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+"""
+
+
+EEA_MARKETS = (
+ ("AT","Austria"),("BE","Belgium"),("BG","Bulgaria"),("HR","Croatia"),("CY","Cyprus"),
+ ("CZ","Czechia"),("DK","Denmark"),("EE","Estonia"),("FI","Finland"),("FR","France"),
+ ("DE","Germany"),("GR","Greece"),("HU","Hungary"),("IS","Iceland"),("IE","Ireland"),
+ ("IT","Italy"),("LV","Latvia"),("LI","Liechtenstein"),("LT","Lithuania"),("LU","Luxembourg"),
+ ("MT","Malta"),("NL","Netherlands"),("NO","Norway"),("PL","Poland"),("PT","Portugal"),
+ ("RO","Romania"),("SK","Slovakia"),("SI","Slovenia"),("ES","Spain"),("SE","Sweden"),
+)
+
+
+def init_db() -> None:
+    """Create the owned schema and seed vertical/market dimensions."""
+    ddl = DDL.replace("fast_comps", SCHEMA)
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute(ddl)
+        cur.execute(f"""INSERT INTO {SCHEMA}.verticals (id,name,description)
+            VALUES ('clinics','Clinics','Private clinic, hospital and wellness intelligence')
+            ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description""")
+        cur.executemany(f"""INSERT INTO {SCHEMA}.markets
+            (country_code,country_name,priority,target_competitors) VALUES (%s,%s,%s,10)
+            ON CONFLICT (country_code) DO UPDATE SET country_name=EXCLUDED.country_name""",
+            [(code,name,i+1) for i,(code,name) in enumerate(EEA_MARKETS)])
+        cur.execute(f"""INSERT INTO {SCHEMA}.coverage_campaigns
+            (vertical_id,country_code,priority,target,status,source_system)
+            SELECT 'clinics',country_code,priority,target_competitors,'not_started','fastcomps'
+            FROM {SCHEMA}.markets ON CONFLICT (vertical_id,country_code) DO NOTHING""")
         conn.commit()
-    Base.metadata.create_all(bind=engine)
-    _init_chat_tables()
-    _init_car_tables()
 
 
-def _init_chat_tables():
-    """Create chat tables if they don't exist."""
-    ddl = [
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.chat_users (
-            id SERIAL PRIMARY KEY,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            password_hash VARCHAR(255),
-            name VARCHAR(200),
-            is_verified BOOLEAN DEFAULT FALSE,
-            verify_token VARCHAR(64),
-            reset_token VARCHAR(64),
-            reset_token_expires TIMESTAMPTZ,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.chat_sessions (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER REFERENCES {SCHEMA}.chat_users(id),
-            title VARCHAR(255) DEFAULT 'New chat',
-            agent_slug VARCHAR(100),
-            share_token VARCHAR(64),
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.chat_messages (
-            id SERIAL PRIMARY KEY,
-            session_id INTEGER REFERENCES {SCHEMA}.chat_sessions(id),
-            role VARCHAR(20) NOT NULL,
-            content TEXT NOT NULL,
-            agent_slug VARCHAR(100),
-            tool_calls JSONB,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-    ]
-    alters = [
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS name VARCHAR(200)",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS verify_token VARCHAR(64)",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64)",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ",
-        f"ALTER TABLE {SCHEMA}.chat_users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user'",
-    ]
-    invitations_ddl = f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.invitations (
-        id SERIAL PRIMARY KEY,
-        email VARCHAR(255) NOT NULL,
-        token VARCHAR(64) UNIQUE NOT NULL,
-        invited_by INTEGER REFERENCES {SCHEMA}.chat_users(id),
-        role VARCHAR(20) DEFAULT 'user',
-        message TEXT,
-        status VARCHAR(20) DEFAULT 'pending',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        expires_at TIMESTAMPTZ,
-        accepted_at TIMESTAMPTZ
-    )"""
-    with engine.connect() as conn:
-        for stmt in ddl:
-            conn.execute(text(stmt))
-        conn.execute(text(invitations_ddl))
-        for stmt in alters:
-            try:
-                conn.execute(text(stmt))
-            except Exception:
-                pass
-        # Ensure guest user (id=0) exists for unauthenticated mobile API access
-        exists = conn.execute(text(f"SELECT 1 FROM {SCHEMA}.chat_users WHERE id = 0")).fetchone()
-        if not exists:
-            conn.execute(text(
-                f"INSERT INTO {SCHEMA}.chat_users (id, email, name, password_hash) "
-                f"VALUES (0, 'guest@carhero.chat', 'Guest', 'nologin')"
-            ))
-        # Seed admin user
-        _seed_admin(conn)
-        conn.commit()
+def fetch_all(query: str, params: tuple | dict = ()) -> list[dict]:
+    with connection(dict_rows=True) as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
 
 
-def _seed_admin(conn):
-    """Create the default admin user if it doesn't exist."""
-    import bcrypt
-    admin_email = "carehero.admin@predictivelabs.co.uk"
-    admin_pw = "Autod2$2"
-    exists = conn.execute(
-        text(f"SELECT 1 FROM {SCHEMA}.chat_users WHERE email = :email"),
-        {"email": admin_email},
-    ).fetchone()
-    if not exists:
-        pw_hash = bcrypt.hashpw(admin_pw.encode(), bcrypt.gensalt()).decode()
-        conn.execute(text(f"""
-            INSERT INTO {SCHEMA}.chat_users (email, password_hash, name, is_verified, role)
-            VALUES (:email, :pw, :name, TRUE, 'admin')
-        """), {"email": admin_email, "pw": pw_hash, "name": "CarHero Admin"})
-    else:
-        conn.execute(
-            text(f"UPDATE {SCHEMA}.chat_users SET role = 'admin' WHERE email = :email"),
-            {"email": admin_email},
-        )
-
-
-def _init_car_tables():
-    """Create car listing tables if they don't exist."""
-    ddl = [
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.car_listings (
-            id SERIAL PRIMARY KEY,
-            make VARCHAR(100) NOT NULL,
-            model VARCHAR(100) NOT NULL,
-            variant VARCHAR(200),
-            generation VARCHAR(100),
-            price_eur NUMERIC(12,2),
-            price_original NUMERIC(12,2),
-            currency VARCHAR(3) DEFAULT 'EUR',
-            year INTEGER,
-            mileage_km INTEGER,
-            fuel_type VARCHAR(50),
-            transmission VARCHAR(50),
-            body_type VARCHAR(50),
-            engine_size_cc INTEGER,
-            power_hp INTEGER,
-            power_kw INTEGER,
-            torque_nm INTEGER,
-            drive_type VARCHAR(20),
-            steering_side VARCHAR(5),
-            gears INTEGER,
-            co2_grams INTEGER,
-            fuel_consumption_l100km NUMERIC(4,1),
-            emission_class VARCHAR(20),
-            doors INTEGER,
-            seats INTEGER,
-            exterior_color VARCHAR(50),
-            interior_color VARCHAR(50),
-            interior_material VARCHAR(50),
-            condition VARCHAR(20) DEFAULT 'used',
-            first_registration_date DATE,
-            owners_count INTEGER,
-            accident_free BOOLEAN,
-            service_history BOOLEAN,
-            features JSONB,
-            equipment_packages JSONB,
-            source_url VARCHAR(500) UNIQUE,
-            provider VARCHAR(50) NOT NULL,
-            country VARCHAR(5),
-            city VARCHAR(100),
-            seller_type VARCHAR(20),
-            seller_name VARCHAR(200),
-            listed_date DATE,
-            scraped_at TIMESTAMPTZ DEFAULT NOW(),
-            image_urls JSONB,
-            image_count INTEGER DEFAULT 0,
-            status VARCHAR(20) DEFAULT 'active',
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.price_history (
-            id SERIAL PRIMARY KEY,
-            listing_id INTEGER REFERENCES {SCHEMA}.car_listings(id),
-            price_eur NUMERIC(12,2),
-            recorded_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.car_models (
-            id SERIAL PRIMARY KEY,
-            make VARCHAR(100) NOT NULL,
-            model VARCHAR(100) NOT NULL,
-            generation VARCHAR(100),
-            body_type VARCHAR(50),
-            production_start INTEGER,
-            production_end INTEGER,
-            segment VARCHAR(50),
-            UNIQUE(make, model, generation)
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.market_snapshots (
-            id SERIAL PRIMARY KEY,
-            make VARCHAR(100),
-            model VARCHAR(100),
-            country VARCHAR(5),
-            avg_price_eur NUMERIC(12,2),
-            median_price_eur NUMERIC(12,2),
-            listing_count INTEGER,
-            avg_mileage_km INTEGER,
-            avg_age_years NUMERIC(4,1),
-            snapshot_date DATE NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.deals (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            make VARCHAR(100) NOT NULL,
-            model VARCHAR(100) NOT NULL,
-            cheapest_listing_id INTEGER REFERENCES {SCHEMA}.car_listings(id),
-            priciest_listing_id INTEGER REFERENCES {SCHEMA}.car_listings(id),
-            cheapest_price_eur NUMERIC(12,2),
-            priciest_price_eur NUMERIC(12,2),
-            savings_eur NUMERIC(12,2),
-            savings_pct NUMERIC(5,1),
-            cheapest_country VARCHAR(5),
-            cheapest_provider VARCHAR(50),
-            priciest_country VARCHAR(5),
-            priciest_provider VARCHAR(50),
-            listing_count INTEGER DEFAULT 0,
-            status VARCHAR(20) DEFAULT 'active',
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            updated_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(make, model)
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.investment_scores (
-            id SERIAL PRIMARY KEY,
-            listing_id INTEGER NOT NULL REFERENCES {SCHEMA}.car_listings(id) ON DELETE CASCADE,
-            score INTEGER NOT NULL CHECK (score BETWEEN 0 AND 100),
-            tier INTEGER NOT NULL CHECK (tier BETWEEN 1 AND 3),
-            percentile NUMERIC(4,1),
-            price_score INTEGER,
-            mileage_score INTEGER,
-            depreciation_score INTEGER,
-            scarcity_score INTEGER,
-            config_score INTEGER,
-            strength_summary TEXT,
-            computed_at TIMESTAMPTZ DEFAULT NOW(),
-            snapshot_date DATE NOT NULL,
-            UNIQUE(listing_id, snapshot_date)
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.favorites (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES {SCHEMA}.chat_users(id) ON DELETE CASCADE,
-            listing_id INTEGER NOT NULL REFERENCES {SCHEMA}.car_listings(id) ON DELETE CASCADE,
-            price_at_save NUMERIC(12,2),
-            note VARCHAR(500),
-            created_at TIMESTAMPTZ DEFAULT NOW(),
-            UNIQUE(user_id, listing_id)
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.saved_searches (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES {SCHEMA}.chat_users(id) ON DELETE CASCADE,
-            name VARCHAR(200) NOT NULL,
-            filters JSONB NOT NULL,
-            last_viewed_at TIMESTAMPTZ DEFAULT NOW(),
-            last_count INTEGER DEFAULT 0,
-            notify_email BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.garage_cars (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES {SCHEMA}.chat_users(id) ON DELETE CASCADE,
-            make VARCHAR(100) NOT NULL,
-            model VARCHAR(100) NOT NULL,
-            variant VARCHAR(200),
-            year INTEGER NOT NULL,
-            mileage_km INTEGER,
-            purchase_price_eur NUMERIC(12,2),
-            purchase_date DATE,
-            fuel_type VARCHAR(50),
-            fuel_consumption_l100km NUMERIC(4,1),
-            annual_km INTEGER DEFAULT 15000,
-            insurance_annual_eur NUMERIC(10,2) DEFAULT 1200,
-            maintenance_annual_eur NUMERIC(10,2) DEFAULT 800,
-            created_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-        f"""CREATE TABLE IF NOT EXISTS {SCHEMA}.user_profiles (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES {SCHEMA}.chat_users(id) ON DELETE CASCADE UNIQUE,
-            avatar_url VARCHAR(500),
-            phone VARCHAR(30),
-            country VARCHAR(5),
-            city VARCHAR(100),
-            currency VARCHAR(3) DEFAULT 'EUR',
-            language VARCHAR(5) DEFAULT 'en',
-            budget_min_eur NUMERIC(12,2),
-            budget_max_eur NUMERIC(12,2),
-            preferred_makes JSONB DEFAULT '[]',
-            preferred_body_types JSONB DEFAULT '[]',
-            preferred_fuel_types JSONB DEFAULT '[]',
-            preferred_transmission VARCHAR(20),
-            max_mileage_km INTEGER,
-            min_year INTEGER,
-            max_year INTEGER,
-            notify_new_listings BOOLEAN DEFAULT TRUE,
-            notify_price_drops BOOLEAN DEFAULT TRUE,
-            notify_weekly_digest BOOLEAN DEFAULT TRUE,
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        )""",
-    ]
-    indexes = [
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_make ON {SCHEMA}.car_listings(make)",
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_model ON {SCHEMA}.car_listings(make, model)",
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_provider ON {SCHEMA}.car_listings(provider)",
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_price ON {SCHEMA}.car_listings(price_eur)",
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_year ON {SCHEMA}.car_listings(year)",
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_country ON {SCHEMA}.car_listings(country)",
-        f"CREATE INDEX IF NOT EXISTS idx_price_history_listing ON {SCHEMA}.price_history(listing_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_market_snapshots_date ON {SCHEMA}.market_snapshots(snapshot_date)",
-        f"CREATE INDEX IF NOT EXISTS idx_deals_make_model ON {SCHEMA}.deals(make, model)",
-        f"CREATE INDEX IF NOT EXISTS idx_deals_status ON {SCHEMA}.deals(status)",
-        f"CREATE INDEX IF NOT EXISTS idx_inv_scores_listing ON {SCHEMA}.investment_scores(listing_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_inv_scores_score ON {SCHEMA}.investment_scores(score DESC)",
-        f"CREATE INDEX IF NOT EXISTS idx_inv_scores_tier ON {SCHEMA}.investment_scores(tier)",
-        f"CREATE INDEX IF NOT EXISTS idx_inv_scores_date ON {SCHEMA}.investment_scores(snapshot_date)",
-        f"CREATE INDEX IF NOT EXISTS idx_favorites_user ON {SCHEMA}.favorites(user_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_favorites_listing ON {SCHEMA}.favorites(listing_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_saved_searches_user ON {SCHEMA}.saved_searches(user_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_garage_cars_user ON {SCHEMA}.garage_cars(user_id)",
-        f"CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON {SCHEMA}.user_profiles(user_id)",
-    ]
-    alters = [
-        f"ALTER TABLE {SCHEMA}.car_listings ADD COLUMN IF NOT EXISTS canonical_variant VARCHAR(200)",
-    ]
-    alter_indexes = [
-        f"CREATE INDEX IF NOT EXISTS idx_car_listings_canonical_variant ON {SCHEMA}.car_listings(canonical_variant)",
-    ]
-    with engine.connect() as conn:
-        for stmt in ddl:
-            conn.execute(text(stmt))
-        for stmt in indexes:
-            conn.execute(text(stmt))
-        for stmt in alters:
-            try:
-                conn.execute(text(stmt))
-            except Exception:
-                pass
-        for stmt in alter_indexes:
-            try:
-                conn.execute(text(stmt))
-            except Exception:
-                pass
-        conn.commit()
+def fetch_one(query: str, params: tuple | dict = ()) -> dict | None:
+    rows = fetch_all(query, params)
+    return rows[0] if rows else None

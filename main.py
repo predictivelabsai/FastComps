@@ -1,244 +1,121 @@
-import os
-from fasthtml.common import *
-from starlette.responses import RedirectResponse
-from starlette.staticfiles import StaticFiles
+"""FastComps public dashboard and read-only API."""
+from __future__ import annotations
 
-from components.layout import app_styles, Page
-from pages.home import home_page
-from pages.about import about_page
-from pages.contact import contact_page
-from pages.legal import delete_account_page, privacy_page
+import re
+import time
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 
-from starlette.responses import JSONResponse as _JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
-from db import init_db
+from assistant import answer
+from config import APP_NAME, APP_VERSION
+from db import SCHEMA, connection, init_db
+import repository
 
-app, rt = fast_app(
-    hdrs=(app_styles(),),
-    secret_key=os.environ.get('APP_SECRET', 'carhero-app-2026'),
-)
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title=APP_NAME, version=APP_VERSION, docs_url="/api/docs", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+_requests: dict[str, deque[float]] = defaultdict(deque)
 
 
-@rt("/health")
-def health():
-    return _JSONResponse({"status": "ok"})
+def _country(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.upper()
+    if not re.fullmatch(r"[A-Z]{2}", value):
+        raise HTTPException(400, "Invalid country code")
+    return value
 
 
-# --- Language switching ---
-
-@rt('/set-lang/{code}')
-def set_language(code: str, sess):
-    from utils.i18n import set_lang, LANGUAGES
-    if code in LANGUAGES:
-        set_lang(sess, code)
-    return RedirectResponse('/', status_code=303)
+class AssistantRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=500)
+    country: str | None = Field(default=None, max_length=2)
 
 
-# --- Public pages ---
-
-@rt
-def index(sess):
-    return Page(home_page(sess=sess), active='home', sess=sess)
-
-@rt
-def about(sess):
-    return Page(about_page(), active='about', title='About', sess=sess)
-
-@rt
-def contact(sess):
-    return Page(contact_page(), active='contact', title='Contact', sess=sess)
-
-@rt
-def privacy(sess):
-    return Page(privacy_page(), title='Privacy Policy', sess=sess)
-
-@rt('/delete-account')
-def delete_account(sess):
-    return Page(delete_account_page(), title='Delete Account', sess=sess)
-
-
-# --- Chat routes (Phase 5) ---
-
-from chat.routes import register_chat_routes
-register_chat_routes(rt)
-
-# --- Market Map + Analytics (Phase 6) ---
-
-from chat.market_map import register_market_map_routes
-register_market_map_routes(rt)
-
-from chat.analytics import register_analytics_routes
-register_analytics_routes(rt)
-
-# --- Auth routes ---
-
-from auth.routes import register_auth_routes
-register_auth_routes(rt)
-
-# --- Admin routes ---
-
-from admin.routes import register_admin_routes
-register_admin_routes(rt)
-
-# --- Favorites + Saved Searches + Garage ---
-
-from chat.favorites import register_favorites_routes
-register_favorites_routes(rt)
-
-from chat.garage import register_garage_routes
-register_garage_routes(rt)
-
-from chat.daily_scan import register_daily_scan_routes
-register_daily_scan_routes(rt)
-
-
-# --- Scraper + Daily digest scheduler ---
-
-SCRAPE_PROVIDERS = [
-    "autoscout24", "autotrader", "autohero", "mobile_de", "theparking",
-    "auto24_ee", "auto24_lt", "auto24_lv", "blocket",
-    "otomoto", "coches", "marktplaats", "nettiauto", "bilbasen",
-    "donedeal", "finn", "standvirtual", "autovit", "collectingcars",
-]
-
-
-def _start_scrape_and_digest():
-    """Background daemon: scrape all providers nightly, load to DB, then send digest.
-
-    Timeline each day:
-        SCRAPE_HOUR (default 02:00 UTC)  →  run all scrapers (sequential, ~2-3h)
-        after scrape completes           →  load checkpoint JSONs into DB
-        after load completes             →  mark stale listings (not seen this run)
-        after cleanup                    →  send daily deals digest to all users
-    """
-    import threading
-    import time as _time
-    from datetime import datetime, timedelta
-
-    SCRAPE_HOUR = int(os.environ.get("SCRAPE_HOUR", "2"))
-
-    def _run_scrapers():
-        from scripts.scrape_cars import get_scraper
-        succeeded, failed_list = 0, []
-        for provider in SCRAPE_PROVIDERS:
-            try:
-                print(f"INFO:     [scheduler] Scraping {provider}...", flush=True)
-                scraper = get_scraper(provider)
-                scraper(headless=True, limit=0, brand=None)
-                succeeded += 1
-            except Exception as e:
-                print(f"ERROR:    [scheduler] Scraper {provider} failed: {e}", flush=True)
-                failed_list.append(provider)
-        print(f"INFO:     [scheduler] Scrape done: {succeeded} ok, {len(failed_list)} failed ({', '.join(failed_list) or 'none'})", flush=True)
-        return succeeded
-
-    def _load_to_db():
-        from scripts.scrape_cars import load_to_db
-        total = 0
-        for provider in SCRAPE_PROVIDERS:
-            try:
-                total += load_to_db(provider)
-            except Exception as e:
-                print(f"ERROR:    [scheduler] DB load {provider} failed: {e}", flush=True)
-        print(f"INFO:     [scheduler] Loaded {total} new/updated listings to DB", flush=True)
-        return total
-
-    def _mark_stale():
-        """Mark listings not refreshed in 7 days as stale."""
-        try:
-            from db import engine
-            from sqlalchemy import text
-            with engine.connect() as conn:
-                result = conn.execute(text("""
-                    UPDATE carhero.car_listings
-                    SET status = 'stale'
-                    WHERE status = 'active'
-                      AND scraped_at < NOW() - INTERVAL '7 days'
-                """))
-                conn.commit()
-                print(f"INFO:     [scheduler] Marked {result.rowcount} stale listings", flush=True)
-        except Exception as e:
-            print(f"ERROR:    [scheduler] Stale cleanup failed: {e}", flush=True)
-
-    def _run_digest():
-        try:
-            from scripts.daily_deals import main as digest_main
-            import sys
-            sys.argv = ["daily_deals", "--all"]
-            digest_main()
-        except Exception as e:
-            print(f"ERROR:    [scheduler] Digest error: {e}", flush=True)
-
-    def _loop():
-        while True:
-            now = datetime.now()
-            target = now.replace(hour=SCRAPE_HOUR, minute=0, second=0, microsecond=0)
-            if target <= now:
-                target += timedelta(days=1)
-            wait = (target - now).total_seconds()
-            print(f"INFO:     [scheduler] Next scrape: {target.strftime('%Y-%m-%d %H:%M')} ({wait/3600:.1f}h)", flush=True)
-            _time.sleep(wait)
-
-            print(f"INFO:     [scheduler] === Nightly pipeline starting ===", flush=True)
-
-            print(f"INFO:     [scheduler] Step 1/5: Scraping...", flush=True)
-            scraped = _run_scrapers()
-
-            print(f"INFO:     [scheduler] Step 2/5: Loading to DB...", flush=True)
-            loaded = _load_to_db()
-
-            print(f"INFO:     [scheduler] Step 3/5: Enriching variants...", flush=True)
-            try:
-                from scripts.enrich_variants import enrich_listings
-                enrich_listings()
-            except Exception as e:
-                print(f"ERROR:    [scheduler] Variant enrichment failed: {e}", flush=True)
-
-            print(f"INFO:     [scheduler] Step 4/5: Cleaning stale listings...", flush=True)
-            _mark_stale()
-
-            print(f"INFO:     [scheduler] Step 5/5: Sending digest...", flush=True)
-            _run_digest()
-
-            print(f"INFO:     [scheduler] === Nightly pipeline complete ===", flush=True)
-
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
-
-
-# --- Mount FastAPI mobile API at /api/v1 (optional) ---
-
-_api_status = {"mounted": False, "error": None}
-try:
-    from api.app import api_router
-    app.mount("/api/v1", api_router)
-    _api_status["mounted"] = True
-    print("INFO:     Mobile API mounted at /api/v1 (docs: /api/v1/docs)")
-except ImportError as e:
-    _api_status["error"] = f"ImportError: {e}"
-    print("INFO:     FastAPI not installed — mobile API disabled (monolith mode)")
-except Exception as e:
-    _api_status["error"] = f"{type(e).__name__}: {e}"
-    print(f"ERROR:    Failed to mount mobile API: {e}")
-
-@rt("/api-status")
-def api_status():
-    return _JSONResponse(_api_status)
-
-
-# --- Initialize DB on startup ---
-
-@app.on_event("startup")
-async def startup():
+@app.get("/healthz")
+def healthz():
     try:
-        init_db()
-    except Exception as e:
-        print(f"DB init warning: {e}")
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1"); cur.fetchone()
+        return {"status":"ok","service":APP_NAME,"version":APP_VERSION,"schema":SCHEMA}
+    except Exception as exc:
+        return JSONResponse({"status":"error","detail":type(exc).__name__},status_code=503)
 
-    if os.environ.get("DIGEST_ENABLED", "1") == "1":
-        _start_scrape_and_digest()
+
+@app.get("/health", include_in_schema=False)
+def health_alias(): return healthz()
 
 
-serve(port=int(os.environ.get('PORT', 5011)), reload=False)
+@app.get("/api/overview")
+def api_overview(country: str | None = None): return repository.overview(_country(country))
+
+
+@app.get("/api/coverage")
+def api_coverage(): return repository.coverage()
+
+
+@app.get("/api/competitors")
+def api_competitors(country: str | None = None, q: str | None = Query(default=None,max_length=100), limit: int = 100):
+    return repository.competitors(_country(country),q,limit)
+
+
+@app.get("/api/observations")
+def api_observations(country: str | None = None, competitor_id: str | None = None,
+                     q: str | None = Query(default=None,max_length=100), limit: int = 100):
+    return repository.observations(_country(country),competitor_id,q,limit)
+
+
+@app.get("/api/locations")
+def api_locations(country: str | None = None): return repository.locations(_country(country))
+
+
+@app.get("/api/categories")
+def api_categories(country: str | None = None): return repository.categories(_country(country))
+
+
+@app.get("/api/evidence")
+def api_evidence(country: str | None = None, limit: int = 30): return repository.evidence(_country(country),limit)
+
+
+@app.post("/api/assistant")
+def api_assistant(payload: AssistantRequest, request: Request):
+    ip = request.client.host if request.client else "unknown"; now = time.monotonic(); bucket = _requests[ip]
+    while bucket and bucket[0] < now - 60: bucket.popleft()
+    if len(bucket) >= 10: raise HTTPException(429,"Please wait before asking another question")
+    bucket.append(now)
+    return answer(payload.question.strip(),_country(payload.country))
+
+
+@app.get("/auth/sign-in",response_class=HTMLResponse)
+def sign_in():
+    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Sign in · FastComps</title><link rel='stylesheet' href='/static/app.css'></head><body class='signin-body'><main class='signin-card'><a class='brand' href='/'><span>F</span>FastComps</a><p class='eyebrow'>PUBLIC PREVIEW</p><h1>No sign-in needed yet.</h1><p>The clinics workspace is currently available as a public preview. Google and email access controls are reserved for the gated release.</p><a class='primary-button' href='/'>Open workspace</a></main></body></html>"""
+
+
+@app.get("/auth/google/callback",include_in_schema=False)
+def google_callback(): return RedirectResponse("/")
+
+
+@app.get("/",response_class=HTMLResponse)
+def index(): return DASHBOARD_HTML
+
+
+DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"></head><body>
+<header class="topbar"><a class="brand" href="/"><span>F</span>FastComps</a><nav><button data-view="overview" class="nav-button active">Overview</button><button data-view="competitors" class="nav-button">Competitors</button><button data-view="coverage" class="nav-button">Coverage</button><button data-view="evidence" class="nav-button">Evidence</button></nav><div class="header-actions"><label class="market-picker"><span>Market</span><select id="country"><option value="">All EEA</option></select></label><a class="sign-in" href="/auth/sign-in">Sign in</a></div></header>
+<main class="workspace"><section class="content"><div class="intro"><div><p class="eyebrow">CLINICS · COMPETITIVE INTELLIGENCE</p><h1>See the market as evidence, not noise.</h1><p>Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.</p></div><div class="sync-pill"><i></i><span id="sync-status">Connecting to evidence base…</span></div></div>
+<section class="metrics" id="metrics"><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article></section>
+<section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">MARKET SIGNAL</p><h2>Competitive footprint</h2></div><span class="panel-note">Verified locations only</span></div><div class="overview-grid"><div id="market-map" class="market-map"><div class="map-label">EEA clinic locations</div></div><div><h3>Category depth</h3><div id="categories" class="bar-list"></div></div></div></section>
+<section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">LATEST EVIDENCE</p><h2>Observed services & prices</h2></div><input id="price-search" class="compact-input" placeholder="Filter service or clinic"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Offering</th><th>Price</th><th>Type</th><th>Market</th><th>Evidence</th></tr></thead><tbody id="prices"></tbody></table></div></section>
+<section class="panel view-panel hidden" data-panel="competitors"><div class="panel-head"><div><p class="eyebrow">LANDSCAPE</p><h2>Competitors</h2></div><input id="competitor-search" class="compact-input" placeholder="Search competitors"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Market</th><th>Locations</th><th>Offerings</th><th>Evidence</th><th>Last observed</th></tr></thead><tbody id="competitors"></tbody></table></div></section>
+<section class="panel view-panel hidden" data-panel="coverage"><div class="panel-head"><div><p class="eyebrow">30 EEA MARKETS</p><h2>Coverage status</h2></div><span class="panel-note">Target: 10 verified competitors / market</span></div><div id="coverage-grid" class="coverage-grid"></div></section>
+<section class="panel view-panel hidden" data-panel="evidence"><div class="panel-head"><div><p class="eyebrow">SOURCE REGISTER</p><h2>Recent evidence</h2></div><span class="panel-note">Retained snapshots</span></div><div id="evidence-list" class="evidence-list"></div></section></section>
+<aside class="assistant"><div class="assistant-head"><div class="assistant-mark">✦</div><div><p class="eyebrow">FASTCOMPS AI</p><h2>Evidence analyst</h2></div><span class="live-dot">LIVE</span></div><div id="assistant-feed" class="assistant-feed"><div class="assistant-message"><p>Ask about competitors, coverage, services or prices. I’ll answer from the current evidence base and show the sources.</p></div><div class="suggestions"><button>Which markets need attention?</button><button>Compare clinic pricing in Lithuania</button><button>Where is IV therapy observed?</button></div></div><form id="assistant-form" class="assistant-form"><textarea id="question" rows="2" maxlength="500" placeholder="Ask about this market…" required></textarea><button aria-label="Send question">↑</button></form><p class="assistant-foot">Read-only analysis · Sources stay visible</p></aside></main><script src="/static/app.js" defer></script></body></html>"""
