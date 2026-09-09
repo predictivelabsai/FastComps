@@ -31,7 +31,7 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 
 - `/`: public product landing for anonymous visitors; central streamed conversation workspace with persisted history after sign-in.
 - `/dashboard`: market overview, competitor, OpenStreetMap, coverage and evidence views; this is the only surface with the compact Evidence Analyst. Country flag filters are URL-addressable and shared across the dashboard.
-- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country/currency relative price colour. Selecting a treatment drills into its retained price evidence.
+- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country EUR-relative price colour. Selecting a treatment drills into its retained price evidence.
 - `/competitors/{competitor_id}`: provider footprint, clinic locations and published treatment prices with relative market-level bands and direct evidence links.
 - `/developers`: public developer guide, API resource catalogue, quick starts and links to public Swagger, ReDoc and versioned OpenAPI contracts. Data calls remain authenticated.
 - `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
@@ -40,7 +40,7 @@ English, Estonian and Lithuanian are available from the flag selector on every p
 
 ## Daily Clinic Market Scan
 
-The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). It summarizes fresh source-backed observations, active competitors and markets, retained sources, readable evidence links, and the markets with the largest coverage gaps. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
+The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). Lithuania leads the digest, followed by priced treatment benchmarks showing the lowest and highest publishing clinics with direct evidence links. A six-hour ingester persists the ECB daily reference table and all displayed prices are converted to EUR; original currency amounts remain retained for audit. Unpriced records remain retained for future scans but are excluded from the email, as is operational coverage-queue reporting. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
 
 ```bash
 python -m scripts.daily_scan --dry-run

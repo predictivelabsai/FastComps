@@ -19,6 +19,7 @@ from psycopg2.extras import RealDictCursor
 from config import DAILY_SCAN_ENABLED, DAILY_SCAN_HOUR_UTC, SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS
 from db import SCHEMA, connection, init_db
 from migration import sync_fastclinic
+from fx import sync_exchange_rates
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("fastcomps.worker")
@@ -67,6 +68,7 @@ def process_one_job() -> bool:
 def run_forever() -> None:
     init_db()
     next_sync = 0.0
+    next_fx_sync = 0.0
     now_utc = datetime.now(timezone.utc)
     next_scan = now_utc.replace(hour=DAILY_SCAN_HOUR_UTC, minute=0, second=0, microsecond=0)
     if next_scan <= now_utc:
@@ -75,6 +77,13 @@ def run_forever() -> None:
         if not acquire_lease():
             time.sleep(WORKER_POLL_SECONDS); continue
         now = time.monotonic()
+        if now >= next_fx_sync:
+            try:
+                result = sync_exchange_rates()
+                log.info("ECB FX rates synced: %s currencies effective %s", result["currencies"], result["effective_date"])
+            except Exception:
+                log.exception("Scheduled ECB FX sync failed")
+            next_fx_sync = time.monotonic() + 6 * 60 * 60
         if now >= next_sync:
             try:
                 sync_fastclinic()

@@ -13,7 +13,7 @@ from psycopg2.extras import RealDictCursor
 
 from config import PUBLIC_URL, SESSION_SECRET
 from db import SCHEMA, connection, fetch_all, fetch_one
-from repository import coverage, display_url
+from repository import treatment_type
 
 
 def _flag(country_code: str) -> str:
@@ -29,23 +29,66 @@ def _source_href(value: str | None) -> str:
         return PUBLIC_URL
 
 
-def _signal_rows(hours: int, limit: int, *, fresh_only: bool) -> list[dict]:
+def _signal_rows(hours: int, limit: int, *, fresh_only: bool, country: str | None = None) -> list[dict]:
     freshness = "AND o.retrieved_at >= NOW()-(%(hours)s || ' hours')::interval" if fresh_only else ""
-    return fetch_all(f"""
-        WITH ranked AS (
-          SELECT c.name AS competitor,c.country_code,f.name AS treatment,
-            COALESCE(cat.name,'Unmapped') AS treatment_type,o.price_min,o.price_max,
-            o.currency,o.price_type,o.source_url,o.retrieved_at,
-            ROW_NUMBER() OVER (PARTITION BY c.id ORDER BY o.retrieved_at DESC NULLS LAST,o.id) AS competitor_rank
+    country_filter = "AND c.country_code=%(country)s" if country else ""
+    rows = fetch_all(f"""
+        WITH history_ranked AS (
+          SELECT c.id AS competitor_id,c.name AS competitor,c.country_code,f.name AS treatment,
+            COALESCE(cat.name,'') AS mapped_type,
+            ROUND(o.price_min/fx.units_per_eur,2) AS price_min,
+            ROUND(COALESCE(o.price_max,o.price_min)/fx.units_per_eur,2) AS high_price,
+            o.source_url,o.retrieved_at,fx.effective_date AS fx_effective_date,
+            ROW_NUMBER() OVER (PARTITION BY c.id,f.id,COALESCE(o.original_name,''),o.currency
+              ORDER BY o.retrieved_at DESC NULLS LAST,o.id DESC) AS history_rank
           FROM {SCHEMA}.observations o
           JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
           JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
           LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
-          WHERE c.vertical_id='clinics' {freshness}
+          JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
+          WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL
+            AND COALESCE(o.currency,'')<>'' {freshness} {country_filter}
+        ), clinic_ranked AS (
+          SELECT *,
+            ROW_NUMBER() OVER (PARTITION BY country_code,competitor_id,treatment
+              ORDER BY price_min,retrieved_at DESC NULLS LAST,competitor) AS low_rank,
+            ROW_NUMBER() OVER (PARTITION BY country_code,competitor_id,treatment
+              ORDER BY high_price DESC,retrieved_at DESC NULLS LAST,competitor) AS high_rank
+          FROM history_ranked WHERE history_rank=1
+        ), clinic_benchmarks AS (
+          SELECT country_code,competitor_id,competitor,treatment,MAX(mapped_type) AS mapped_type,
+            MIN(price_min) AS lowest_price,MAX(high_price) AS highest_price,
+            MAX(source_url) FILTER (WHERE low_rank=1) AS lowest_source_url,
+            MAX(source_url) FILTER (WHERE high_rank=1) AS highest_source_url,
+            MAX(retrieved_at) AS retrieved_at,MAX(fx_effective_date) AS fx_effective_date,
+            COUNT(DISTINCT source_url)::int AS source_count
+          FROM clinic_ranked
+          GROUP BY country_code,competitor_id,competitor,treatment
+        ), ranked AS (
+          SELECT *,
+            ROW_NUMBER() OVER (PARTITION BY country_code,treatment
+              ORDER BY lowest_price,retrieved_at DESC NULLS LAST,competitor) AS low_rank,
+            ROW_NUMBER() OVER (PARTITION BY country_code,treatment
+              ORDER BY highest_price DESC,retrieved_at DESC NULLS LAST,competitor) AS high_rank
+          FROM clinic_benchmarks
+        ), benchmarks AS (
+          SELECT country_code,treatment,MAX(mapped_type) AS mapped_type,'EUR'::text AS currency,
+            MIN(lowest_price) AS lowest_price,MAX(highest_price) AS highest_price,
+            MAX(retrieved_at) AS retrieved_at,MAX(fx_effective_date) AS fx_effective_date,
+            COUNT(DISTINCT competitor_id)::int AS clinic_count,SUM(source_count)::int AS source_count,
+            MAX(competitor) FILTER (WHERE low_rank=1) AS lowest_clinic,
+            MAX(lowest_source_url) FILTER (WHERE low_rank=1) AS lowest_source_url,
+            MAX(competitor) FILTER (WHERE high_rank=1) AS highest_clinic,
+            MAX(highest_source_url) FILTER (WHERE high_rank=1) AS highest_source_url
+          FROM ranked GROUP BY country_code,treatment
         )
-        SELECT * FROM ranked WHERE competitor_rank<=2
-        ORDER BY retrieved_at DESC NULLS LAST,competitor,treatment LIMIT %(limit)s
-    """, {"hours": hours, "limit": limit})
+        SELECT * FROM benchmarks
+        ORDER BY retrieved_at DESC NULLS LAST,clinic_count DESC,treatment
+        LIMIT %(limit)s
+    """, {"hours": hours, "limit": limit, "country": country})
+    for row in rows:
+        row["treatment_type"] = treatment_type(row.get("treatment"), row.pop("mapped_type", None))
+    return rows
 
 
 def build_daily_scan(*, hours: int = 36, signal_limit: int = 10) -> dict:
@@ -58,31 +101,47 @@ def build_daily_scan(*, hours: int = 36, signal_limit: int = 10) -> dict:
           COUNT(DISTINCT o.source_url) FILTER (WHERE o.retrieved_at>=NOW()-(%(hours)s || ' hours')::interval) AS sources,
           MAX(o.retrieved_at) AS latest_at
         FROM {SCHEMA}.observations o JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
-        WHERE c.vertical_id='clinics'
+        JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
+        WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL AND COALESCE(o.currency,'')<>''
     """, {"hours": hours}) or {}
-    signals = _signal_rows(hours, signal_limit, fresh_only=True)
-    fallback = not signals
+    candidate_limit = min(120, max(signal_limit * 6, signal_limit))
+    candidates = _signal_rows(hours, candidate_limit, fresh_only=True)
+    fallback = not candidates
     if fallback:
-        signals = _signal_rows(hours, signal_limit, fresh_only=False)
-    gaps = [row for row in coverage() if row["verified"] < row["target"]]
-    gaps.sort(key=lambda row: (row["progress_pct"], -row["observations"], row["country_name"]))
+        candidates = _signal_rows(hours, candidate_limit, fresh_only=False)
+    # Keep Lithuania as the lead market even on a day when its last retained
+    # benchmark falls just outside the freshness window.
+    preferred_fallback = False
+    lithuania = [row for row in candidates if row.get("country_code") == "LT"][:min(3, signal_limit)]
+    if not lithuania:
+        lithuania = _signal_rows(hours, min(3, signal_limit), fresh_only=False, country="LT")
+        if lithuania:
+            preferred_fallback = True
+    preferred_keys = {(row.get("country_code"), row.get("treatment"), row.get("currency")) for row in lithuania}
+    other_markets = [row for row in candidates if row.get("country_code") != "LT"]
+    remaining_lt = [
+        row for row in candidates
+        if row.get("country_code") == "LT"
+        and (row.get("country_code"), row.get("treatment"), row.get("currency")) not in preferred_keys
+    ]
+    signals = (lithuania + other_markets + remaining_lt)[:signal_limit]
+    fx_dates = [str(row["fx_effective_date"]) for row in signals if row.get("fx_effective_date")]
     return {
         "date": date.today().isoformat(),
         "hours": hours,
         "stats": stats,
         "signals": signals,
-        "coverage_watch": gaps[:6],
         "fallback": fallback,
+        "preferred_fallback": preferred_fallback,
+        "fx_effective_date": max(fx_dates, default=None),
     }
 
 
-def _price(signal: dict) -> str:
-    if signal.get("price_min") is None:
-        return "Published price unavailable"
-    low = f"{float(signal['price_min']):,.2f}".rstrip("0").rstrip(".")
-    high = signal.get("price_max")
-    value = f"{low}–{float(high):,.2f}".rstrip("0").rstrip(".") if high is not None else low
-    return f"{value} {signal.get('currency') or ''}".strip()
+def _money(value, currency: str = "") -> str:
+    if value is None:
+        return "—"
+    amount = f"{float(value):,.2f}".rstrip("0").rstrip(".")
+    return f"{amount} {currency}".strip()
 
 
 def _unsubscribe_serializer() -> URLSafeSerializer:
@@ -119,18 +178,21 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
     )
     signals = ""
     for item in scan["signals"]:
-        url = html.escape(_source_href(item.get("source_url")), quote=True)
-        label = html.escape(display_url(item.get("source_url")))
+        low_url = html.escape(_source_href(item.get("lowest_source_url")), quote=True)
+        high_url = html.escape(_source_href(item.get("highest_source_url")), quote=True)
+        low_clinic = html.escape(item.get("lowest_clinic") or "Clinic")
+        high_clinic = html.escape(item.get("highest_clinic") or "Clinic")
+        currency = item.get("currency") or ""
         signals += f"""
         <div style="border:1px solid #dce7e2;border-radius:9px;padding:12px;margin-bottom:8px;background:#fff">
-          <div style="font-size:10px;color:#177357;font-weight:800;letter-spacing:.6px">{_flag(item.get('country_code') or '')} {html.escape(item.get('country_code') or 'EEA')} · {html.escape(item.get('treatment_type') or 'Unmapped')}</div>
+          <div style="font-size:10px;color:#177357;font-weight:800;letter-spacing:.6px">{_flag(item.get('country_code') or '')} {html.escape(item.get('country_code') or 'EEA')} · {html.escape(item.get('treatment_type') or 'General medicine & other treatments')}</div>
           <div style="font-size:15px;color:#12241f;font-weight:700;margin-top:4px">{html.escape(item.get('treatment') or 'Treatment')}</div>
-          <div style="font-size:11px;color:#65756f;margin-top:3px">{html.escape(item.get('competitor') or 'Clinic')} · <strong style="color:#12241f">{html.escape(_price(item))}</strong></div>
-          <div style="margin-top:8px"><a href="{url}" style="color:#177357;font-size:10px;font-weight:700;text-decoration:none">{label} ↗</a></div>
+          <div style="font-size:10px;color:#65756f;margin:3px 0 8px">Published benchmark across {int(item.get('clinic_count') or 0)} clinic{'s' if int(item.get('clinic_count') or 0) != 1 else ''}</div>
+          <table role="presentation" style="border-collapse:collapse;width:100%">
+            <tr><td style="padding:6px 0;border-top:1px solid #edf2ef;font-size:10px;color:#65756f">LOWEST</td><td style="padding:6px 8px;border-top:1px solid #edf2ef;font-size:11px"><a href="{low_url}" style="color:#177357;font-weight:700;text-decoration:none">{low_clinic} ↗</a></td><td style="padding:6px 0;border-top:1px solid #edf2ef;text-align:right;font-size:12px;color:#12241f;font-weight:800">{html.escape(_money(item.get('lowest_price'), currency))}</td></tr>
+            <tr><td style="padding:6px 0;border-top:1px solid #edf2ef;font-size:10px;color:#65756f">HIGHEST</td><td style="padding:6px 8px;border-top:1px solid #edf2ef;font-size:11px"><a href="{high_url}" style="color:#177357;font-weight:700;text-decoration:none">{high_clinic} ↗</a></td><td style="padding:6px 0;border-top:1px solid #edf2ef;text-align:right;font-size:12px;color:#12241f;font-weight:800">{html.escape(_money(item.get('highest_price'), currency))}</td></tr>
+          </table>
         </div>"""
-    gaps = ""
-    for item in scan["coverage_watch"]:
-        gaps += f"""<tr><td style="padding:8px 4px;border-bottom:1px solid #e8eeeb;font-size:12px;color:#12241f">{_flag(item['country_code'])} {html.escape(item['country_name'])}</td><td style="padding:8px 4px;border-bottom:1px solid #e8eeeb;font-size:12px;color:#65756f;text-align:center">{item['verified']}/{item['target']}</td><td style="padding:8px 4px;border-bottom:1px solid #e8eeeb;font-size:12px;color:#65756f;text-align:right">{item['observations']:,}</td></tr>"""
     scan_date = date.fromisoformat(scan["date"]).strftime("%d %b %Y")
     intro = (
         f"Fresh evidence retained during the last {scan['hours']} hours."
@@ -145,15 +207,10 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
     <div style="font-size:13px;color:#b7c9c1;margin-top:4px">Daily Clinic Market Scan · 30 EEA markets</div>
     <div style="font-size:11px;color:#7f978d;margin-top:3px">{scan_date}</div>
   </div>
-  <div style="padding:17px 4px 8px"><p style="font-size:13px;color:#445650;line-height:1.6;margin:0">{intro} Every signal below links to its public source.</p></div>
+  <div style="padding:17px 4px 8px"><p style="font-size:13px;color:#445650;line-height:1.6;margin:0">{intro} Every signal below links to its public source. Prices are converted to EUR using <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" style="color:#177357">ECB reference rates</a>{f' effective {html.escape(str(scan["fx_effective_date"]))}' if scan.get('fx_effective_date') else ''}; original prices remain retained as evidence.</p></div>
   <table role="presentation" style="border-collapse:collapse;width:100%;table-layout:fixed;margin:5px -5px 14px"><tr>{cards}</tr></table>
   <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Daily evidence scan · {len(scan['signals'])} signals</div></div>
   {signals or '<p style="color:#65756f;font-size:12px">No retained signals are available yet.</p>'}
-  <div style="margin-top:22px;border-top:2px solid #dce7e2;padding-top:14px">
-    <div style="font-size:11px;font-weight:800;color:#177357;text-transform:uppercase;letter-spacing:.7px">Coverage watch</div>
-    <div style="font-size:17px;font-weight:750;color:#12241f;margin:4px 0 7px">Markets needing the next pass</div>
-    <table style="border-collapse:collapse;width:100%"><tr><th style="text-align:left;font-size:9px;color:#87958f">MARKET</th><th style="text-align:center;font-size:9px;color:#87958f">VERIFIED</th><th style="text-align:right;font-size:9px;color:#87958f">OBSERVATIONS</th></tr>{gaps}</table>
-  </div>
   <div style="text-align:center;margin-top:20px;padding:17px 0;border-top:1px solid #dce7e2">
     <a href="{PUBLIC_URL}/dashboard" style="background:#177357;border-radius:8px;color:#fff;display:inline-block;font-size:12px;font-weight:750;padding:11px 17px;text-decoration:none">Open FastComps dashboard →</a>
     <div style="font-size:10px;color:#94a29d;margin-top:13px">Source-backed market intelligence · Predictive Labs Ltd</div>
@@ -163,12 +220,16 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
 
 
 def render_daily_scan_text(scan: dict) -> str:
-    lines = [f"FastComps Daily Clinic Market Scan — {scan['date']}", ""]
+    fx_note = f" (effective {scan['fx_effective_date']})" if scan.get("fx_effective_date") else ""
+    lines = [f"FastComps Daily Clinic Market Scan — {scan['date']}",
+             f"All prices converted to EUR using ECB reference rates{fx_note}; original prices are retained.", ""]
     for item in scan["signals"]:
         lines.extend((
             f"{item.get('country_code')} · {item.get('treatment_type')} · {item.get('treatment')}",
-            f"{item.get('competitor')} · {_price(item)}",
-            _source_href(item.get("source_url")), "",
+            f"Lowest: {item.get('lowest_clinic')} · {_money(item.get('lowest_price'), item.get('currency') or '')}",
+            _source_href(item.get("lowest_source_url")),
+            f"Highest: {item.get('highest_clinic')} · {_money(item.get('highest_price'), item.get('currency') or '')}",
+            _source_href(item.get("highest_source_url")), "",
         ))
     lines.extend(("Open FastComps:", f"{PUBLIC_URL}/dashboard"))
     return "\n".join(lines)

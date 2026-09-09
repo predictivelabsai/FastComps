@@ -222,9 +222,9 @@ def _observation_query(plan: AnalysisPlan) -> tuple[str, dict[str, Any]]:
     elif plan.metric == "competitor_count":
         value = "COUNT(DISTINCT c.id)::numeric"
     else:
-        value = "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.price_min)::numeric"
-    currency_select = ", o.currency" if plan.metric == "median_price" else ""
-    currency_group = ", o.currency" if plan.metric == "median_price" else ""
+        value = "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.price_min/fx.units_per_eur)::numeric"
+    currency_select = ", 'EUR'::text AS currency" if plan.metric == "median_price" else ""
+    fx_join = f"JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency" if plan.metric == "median_price" else ""
     return f"""SELECT {expression} AS label, {value} AS value{currency_select},
         COUNT(*)::int AS evidence_count,COUNT(DISTINCT o.source_url)::int AS source_count,
         MAX(o.retrieved_at) AS latest_at
@@ -232,8 +232,9 @@ def _observation_query(plan: AnalysisPlan) -> tuple[str, dict[str, Any]]:
       JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
       JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
       LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
+      {fx_join}
       WHERE {' AND '.join(where)}
-      GROUP BY {expression}{currency_group}
+      GROUP BY {expression}
       ORDER BY value DESC NULLS LAST,label
       LIMIT %(limit)s""", params
 
@@ -375,7 +376,7 @@ def execute_plan(plan: AnalysisPlan, lang: str = "en") -> dict[str, Any]:
         leaders=leaders, records=f"{evidence_count:,}", sources=f"{source_count:,}",
     )
     if plan.metric == "median_price":
-        summary += " " + t("Currency is kept separate so unlike prices are never combined.", lang)
+        summary += " " + t("Prices are converted to EUR using the latest retained ECB reference rates.", lang)
     summary += " " + t(
         "Coverage: {covered} covered, {running} running, {queued} queued, {review} requiring review, {not_started} not started and {failed} failed.",
         lang, covered=coverage_counts["covered"], running=coverage_counts["running"], queued=coverage_counts["queued"],

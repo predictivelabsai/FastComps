@@ -56,10 +56,12 @@ def test_query_compiler_parameterises_user_filters():
     assert "LIMIT %(limit)s" in sql
 
 
-def test_median_price_never_combines_currencies():
+def test_median_price_converts_every_currency_to_eur():
     sql, _ = analytics.build_query(analytics.AnalysisPlan("median_price", "market"))
-    assert "o.currency" in sql
-    assert "GROUP BY c.country_code, o.currency" in sql
+    assert "exchange_rates fx ON fx.currency=o.currency" in sql
+    assert "o.price_min/fx.units_per_eur" in sql
+    assert "'EUR'::text AS currency" in sql
+    assert "GROUP BY c.country_code" in sql
 
 
 def test_stream_contract_contains_no_sql(monkeypatch):

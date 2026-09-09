@@ -144,6 +144,10 @@ CREATE TABLE IF NOT EXISTS fast_comps.observations (
 CREATE INDEX IF NOT EXISTS observations_competitor_idx ON fast_comps.observations(competitor_id);
 CREATE INDEX IF NOT EXISTS observations_offering_idx ON fast_comps.observations(offering_id);
 CREATE INDEX IF NOT EXISTS observations_retrieved_idx ON fast_comps.observations(retrieved_at DESC);
+CREATE TABLE IF NOT EXISTS fast_comps.exchange_rates (
+ currency CHAR(3) PRIMARY KEY, units_per_eur NUMERIC(20,8) NOT NULL CHECK (units_per_eur > 0),
+ effective_date DATE NOT NULL, source_url TEXT NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS fast_comps.candidates (
  id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), country_code CHAR(2),
  candidate_key TEXT, name TEXT, official_domain TEXT, source_url TEXT, source_type TEXT,
@@ -264,6 +268,11 @@ def init_db() -> None:
             (vertical_id,country_code,priority,target,status,source_system)
             SELECT 'clinics',country_code,priority,target_competitors,'not_started','fastcomps'
             FROM {SCHEMA}.markets ON CONFLICT (vertical_id,country_code) DO NOTHING""")
+        cur.execute(f"""INSERT INTO {SCHEMA}.exchange_rates
+            (currency,units_per_eur,effective_date,source_url)
+            VALUES ('EUR',1,CURRENT_DATE,'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml')
+            ON CONFLICT (currency) DO UPDATE SET units_per_eur=1,
+              effective_date=EXCLUDED.effective_date,source_url=EXCLUDED.source_url,updated_at=NOW()""")
         conn.commit()
 
 

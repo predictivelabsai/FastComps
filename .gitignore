@@ -155,6 +155,7 @@ activemq-data/
 .envrc
 .playwright-cli/
 output/
+data/
 .venv
 env/
 venv/

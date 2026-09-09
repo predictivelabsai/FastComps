@@ -10,36 +10,12 @@ from uuid import UUID
 from psycopg2.extras import Json
 
 from db import SCHEMA, connection, fetch_all, fetch_one
-
-
-TREATMENT_TYPE_RULES = (
-    ("Wellness & IV therapy", ("iv ", "infusion", "vitamin", "hydration", "longevity", "drip", "immune", "energy boost", "anti-stress", "recovery boost")),
-    ("Consultations", ("consult", "appointment", "examination", "visit", "second opinion", "check-up", "checkup", "on-call")),
-    ("Diagnostics & imaging", ("mri", "ct ", "x-ray", "xray", "ultrasound", "ecg", "diagnostic", "scan", "echo", "endoscop", "radiolog", "ecografie")),
-    ("Laboratory", ("blood", "laboratory", "panel", "triglycer", "ferritin", "glucose", "haemoglobin", "hemoglobin", "urine", "allergy test")),
-    ("Dental", ("dental", "dentist", "tooth", "teeth", "implant", "orthodont", "crown", "root canal")),
-    ("Dermatology & aesthetics", ("dermat", "skin", "filler", "botox", "laser", "aesthetic", "cosmetic", "beauty", "lipoma", "atheroma")),
-    ("Orthopaedics & spine", ("orthop", "joint", "knee", "hip", "spine", "scoliosis", "shoulder", "tendon", "femur", "ganglion", "bursa", "osteotom")),
-    ("Women's health", ("gynaec", "gynec", "uter", "ovary", "ovarian", "cervi", "pregnan", "maternity", "breast")),
-    ("Urology", ("urolog", "prostate", "bladder", "kidney", "renal", "vasectomy")),
-    ("Cardiology", ("cardi", "coronary", "heart", "vascular", "vein", "arter")),
-    ("Eye care", ("ophthalm", "cataract", "retina", "vision", "eye ", "eyelid")),
-    ("ENT", ("ent ", "ear ", "nose", "nasal", "sinus", "throat", "tonsil", "hearing")),
-    ("Rehabilitation", ("physio", "rehabil", "massage", "mobility", "occupational therapy")),
-    ("Mental health", ("psychi", "psycholog", "therapy session", "counselling", "counseling")),
-    ("Surgery & procedures", ("surgery", "surgical", "operation", "removal", "repair", "resection", "puncture", "injection", "biopsy", "ectomy", "plasty", "hernia", "suture")),
-)
+from treatment_taxonomy import classify_treatment
 
 
 def treatment_type(name: str | None, mapped: str | None = None) -> str:
-    """Return the retained taxonomy label or a conservative broad display group."""
-    if mapped and mapped.strip().casefold() not in {"unmapped", "uncategorised", "uncategorized"}:
-        return mapped
-    normalized = f" {(name or '').casefold()} "
-    for label, needles in TREATMENT_TYPE_RULES:
-        if any(needle in normalized for needle in needles):
-            return label
-    return "Other treatments"
+    """Return a stable category while retaining the raw offering unchanged."""
+    return classify_treatment(name, mapped)
 
 
 def coverage_status(row: dict) -> str:
@@ -178,13 +154,22 @@ def observations(country: str | None = None, competitor_id: str | None = None,
         where.append("(f.name ILIKE %(query)s OR o.original_name ILIKE %(query)s OR c.name ILIKE %(query)s)"); params["query"] = f"%{query}%"
     rows = clean_rows(fetch_all(f"""
         SELECT o.id,c.id AS competitor_id,c.name AS competitor,c.country_code,
-          f.name AS offering,o.original_name,o.price_min,o.price_max,o.price_type,o.currency,
+          f.name AS offering,o.original_name,
+          o.price_min AS original_price_min,o.price_max AS original_price_max,o.currency AS original_currency,
+          ROUND(CASE WHEN o.currency='EUR' THEN o.price_min
+            WHEN fx.units_per_eur IS NOT NULL THEN o.price_min/fx.units_per_eur END,2) AS price_min,
+          ROUND(CASE WHEN o.currency='EUR' THEN o.price_max
+            WHEN fx.units_per_eur IS NOT NULL THEN o.price_max/fx.units_per_eur END,2) AS price_max,
+          o.price_type,CASE WHEN o.price_min IS NOT NULL AND (o.currency='EUR' OR fx.units_per_eur IS NOT NULL)
+            THEN 'EUR' END AS currency,
+          fx.effective_date AS fx_effective_date,fx.source_url AS fx_source_url,
           o.evidence,o.source_url,o.provider,o.published_at,o.retrieved_at,
           cat.name AS category
         FROM {SCHEMA}.observations o
         JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
         JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
         LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
+        LEFT JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
         WHERE {' AND '.join(where)} ORDER BY o.retrieved_at DESC NULLS LAST,c.name,f.name LIMIT %(limit)s
     """, params))
     for row in rows:
@@ -241,20 +226,31 @@ def treatment_treemap(country: str | None = None, limit: int = 700) -> list[dict
     params = {"country": country, "limit": min(max(limit, 1), 1200)}
     extra = "AND c.country_code=%(country)s" if country else ""
     rows = clean_rows(fetch_all(f"""
-        WITH leaves AS (
-          SELECT c.country_code,cat.name AS mapped_type,
-            f.name AS treatment,o.currency,
-            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.price_min)::numeric AS median_price,
-            COUNT(*)::int AS observations,COUNT(DISTINCT o.source_url)::int AS sources
+        WITH history_ranked AS (
+          SELECT o.*,ROW_NUMBER() OVER (PARTITION BY o.competitor_id,o.offering_id,
+            COALESCE(o.original_name,''),o.currency ORDER BY o.retrieved_at DESC NULLS LAST,o.id DESC) AS history_rank
           FROM {SCHEMA}.observations o
+        ), converted AS (
+          SELECT o.*,ROUND(CASE WHEN o.currency='EUR' THEN o.price_min
+            WHEN fx.units_per_eur IS NOT NULL THEN o.price_min/fx.units_per_eur END,2) AS price_eur,
+            fx.effective_date AS fx_effective_date
+          FROM history_ranked o LEFT JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
+          WHERE o.history_rank=1
+        ), leaves AS (
+          SELECT c.country_code,cat.name AS mapped_type,
+            f.name AS treatment,'EUR'::text AS currency,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.price_eur)::numeric AS median_price,
+            COUNT(*)::int AS observations,COUNT(DISTINCT o.source_url)::int AS sources,
+            MAX(o.fx_effective_date) AS fx_effective_date
+          FROM converted o
           JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
           JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
           LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
-          WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL {extra}
-          GROUP BY c.country_code,cat.name,f.name,o.currency
+          WHERE c.vertical_id='clinics' AND o.price_eur IS NOT NULL {extra}
+          GROUP BY c.country_code,cat.name,f.name
         ), ranked AS (
           SELECT *,CUME_DIST() OVER (
-            PARTITION BY country_code,currency ORDER BY median_price
+            PARTITION BY country_code ORDER BY median_price
           )::numeric AS price_level
           FROM leaves
         )
@@ -281,18 +277,33 @@ def competitor_detail(competitor_id: str) -> dict | None:
     location_rows = clean_rows(fetch_all(f"""SELECT id,name,address,city,country_code,postal_code,phone,
         website_url,latitude,longitude,geocode_status,source_url,evidence,retrieved_at
         FROM {SCHEMA}.competitor_locations WHERE competitor_id=%s ORDER BY city,address""", (competitor_id,)))
-    prices = clean_rows(fetch_all(f"""WITH market_prices AS (
-          SELECT o.id,o.competitor_id,f.name AS offering,o.original_name,o.price_min,o.price_max,
-            o.price_type,o.currency,o.source_url,o.evidence,o.retrieved_at,
+    prices = clean_rows(fetch_all(f"""WITH history_ranked AS (
+          SELECT o.*,ROW_NUMBER() OVER (PARTITION BY o.competitor_id,o.offering_id,
+            COALESCE(o.original_name,''),o.currency ORDER BY o.retrieved_at DESC NULLS LAST,o.id DESC) AS history_rank
+          FROM {SCHEMA}.observations o
+        ), current_prices AS (
+          SELECT o.*,ROUND(CASE WHEN o.currency='EUR' THEN o.price_min
+            WHEN fx.units_per_eur IS NOT NULL THEN o.price_min/fx.units_per_eur END,2) AS price_min_eur,
+            ROUND(CASE WHEN o.currency='EUR' THEN o.price_max
+            WHEN fx.units_per_eur IS NOT NULL THEN o.price_max/fx.units_per_eur END,2) AS price_max_eur,
+            fx.effective_date AS fx_effective_date,fx.source_url AS fx_source_url
+          FROM history_ranked o LEFT JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
+          WHERE o.history_rank=1
+        ), market_prices AS (
+          SELECT o.id,o.competitor_id,f.name AS offering,o.original_name,
+            o.price_min AS original_price_min,o.price_max AS original_price_max,o.currency AS original_currency,
+            o.price_min_eur AS price_min,o.price_max_eur AS price_max,
+            o.price_type,'EUR'::text AS currency,o.fx_effective_date,o.fx_source_url,
+            o.source_url,o.evidence,o.retrieved_at,
             c.country_code,cat.name AS mapped_type,
             CUME_DIST() OVER (
-              PARTITION BY c.country_code,o.currency,COALESCE(cat.name,'') ORDER BY o.price_min
+              PARTITION BY c.country_code,COALESCE(cat.name,'') ORDER BY o.price_min_eur
             )::numeric AS price_level
-          FROM {SCHEMA}.observations o
+          FROM current_prices o
           JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
           JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
           LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
-          WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL
+          WHERE c.vertical_id='clinics' AND o.price_min_eur IS NOT NULL
         ) SELECT * FROM market_prices WHERE competitor_id=%s
         ORDER BY offering,price_min,retrieved_at DESC""", (competitor_id,)))
     for row in prices:
