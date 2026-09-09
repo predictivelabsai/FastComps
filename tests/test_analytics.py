@@ -67,7 +67,7 @@ def test_stream_contract_contains_no_sql(monkeypatch):
     monkeypatch.setattr("assistant.plan_question", lambda *_: plan)
     monkeypatch.setattr(
         "assistant.execute_plan",
-        lambda _: {
+        lambda _, lang="en": {
             "summary": "Estonia has a coverage gap.",
             "visual": {"kind": "bar", "title": "Coverage gap", "rows": [{"label": "EE", "value": 4}]},
             "citations": [{"label": "Clinic source", "url": "https://example.test/evidence"}],

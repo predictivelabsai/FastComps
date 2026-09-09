@@ -19,6 +19,7 @@ from psycopg2.extras import RealDictCursor
 
 from config import XAI_API_KEY, XAI_BASE_URL, XAI_MODEL
 from db import EEA_MARKETS, SCHEMA, connection
+from i18n import t
 
 
 METRICS = {
@@ -77,9 +78,9 @@ class AnalysisPlan:
     search: str | None = None
     limit: int = 12
 
-    def public(self) -> dict[str, Any]:
+    def public(self, lang: str = "en") -> dict[str, Any]:
         data = asdict(self)
-        data.update(metric_label=METRICS[self.metric], dimension_label=DIMENSIONS[self.dimension])
+        data.update(metric_label=t(METRICS[self.metric], lang), dimension_label=t(DIMENSIONS[self.dimension], lang))
         return data
 
 
@@ -96,20 +97,20 @@ def _country_in(question: str) -> str | None:
 def _deterministic_plan(question: str, country: str | None) -> AnalysisPlan | None:
     text = question.casefold()
     inferred_country = country or _country_in(question)
-    if any(term in text for term in ("coverage", "need attention", "gap", "target")):
+    if any(term in text for term in ("coverage", "need attention", "gap", "target", "katvus", "tähelepanu", "aprėpt", "dėmesio")):
         return AnalysisPlan("coverage_gap", "market", inferred_country)
-    if any(term in text for term in ("candidate", "discovery", "pipeline")):
+    if any(term in text for term in ("candidate", "discovery", "pipeline", "kandidaat", "kandidat")):
         return AnalysisPlan("candidate_count", "market", inferred_country)
-    if any(term in text for term in ("source", "evidence", "freshness")):
+    if any(term in text for term in ("source", "evidence", "freshness", "allikas", "tõend", "šaltin", "įrod")):
         return AnalysisPlan("source_count", "provider" if inferred_country else "market", inferred_country)
-    if any(term in text for term in ("location", "footprint", "branch")):
+    if any(term in text for term in ("location", "footprint", "branch", "asukoht", "vieta", "filiaal")):
         return AnalysisPlan("location_count", "competitor", inferred_country)
-    if any(term in text for term in ("price", "pricing", "cost", "median")):
+    if any(term in text for term in ("price", "pricing", "cost", "median", "hind", "hinnad", "kaina", "kainos")):
         dimension = "market" if any(term in text for term in ("market", "country", "countries", "compare")) else "offering"
         return AnalysisPlan("median_price", dimension, inferred_country)
-    if any(term in text for term in ("competitor", "clinic", "provider")):
+    if any(term in text for term in ("competitor", "clinic", "provider", "konkurent", "kliinik", "klinika")):
         return AnalysisPlan("competitor_count", "market", inferred_country)
-    if any(term in text for term in ("observed", "observation", "service", "offering", "category")):
+    if any(term in text for term in ("observed", "observation", "service", "offering", "category", "raviteenus", "protseduur", "procedūr")):
         match = re.search(r"(?:where is|show|find)\s+(.+?)\s+(?:observed|available|offered)", question, re.IGNORECASE)
         search = match.group(1).strip()[:80] if match else None
         return AnalysisPlan("observation_count", "market", inferred_country, search)
@@ -343,7 +344,7 @@ def _citations(plan: AnalysisPlan) -> list[dict[str, str]]:
     ]
 
 
-def execute_plan(plan: AnalysisPlan) -> dict[str, Any]:
+def execute_plan(plan: AnalysisPlan, lang: str = "en") -> dict[str, Any]:
     sql, params = build_query(plan)
     rows = _execute(sql, params)
     evidence_count = sum(int(row.get("evidence_count") or 0) for row in rows)
@@ -359,33 +360,34 @@ def execute_plan(plan: AnalysisPlan) -> dict[str, Any]:
         for row in rows
     ]
     top = public_rows[:3]
-    leaders = ", ".join(f"{row['label']} ({row['value']:,.2f})" for row in top) or "no matching records"
-    scope = plan.country or "the 30 EEA markets"
+    leaders = ", ".join(f"{row['label']} ({row['value']:,.2f})" for row in top) or t("no matching records", lang)
+    scope = plan.country or t("the 30 EEA markets", lang)
     from repository import coverage
 
     coverage_rows = [row for row in coverage() if not plan.country or row["country_code"] == plan.country]
     coverage_counts = {
         status: sum(row["coverage_status"] == status for row in coverage_rows)
-        for status in ("covered", "collecting", "review_required", "not_started")
+        for status in ("covered", "running", "queued", "review_required", "not_started", "failed")
     }
-    summary = (
-        f"For {scope}, {METRICS[plan.metric].lower()} by {DIMENSIONS[plan.dimension].lower()} "
-        f"is led by {leaders}. This governed analysis uses {evidence_count:,} underlying records "
-        f"across {source_count:,} retained source references."
+    summary = t(
+        "For {scope}, {metric} by {dimension} is led by {leaders}. This governed analysis uses {records} underlying records across {sources} retained source references.",
+        lang, scope=scope, metric=t(METRICS[plan.metric], lang).lower(), dimension=t(DIMENSIONS[plan.dimension], lang).lower(),
+        leaders=leaders, records=f"{evidence_count:,}", sources=f"{source_count:,}",
     )
     if plan.metric == "median_price":
-        summary += " Currency is kept separate so unlike prices are never combined."
-    summary += (
-        f" Coverage: {coverage_counts['covered']} covered, {coverage_counts['collecting']} collecting, "
-        f"{coverage_counts['review_required']} requiring review and {coverage_counts['not_started']} not started."
+        summary += " " + t("Currency is kept separate so unlike prices are never combined.", lang)
+    summary += " " + t(
+        "Coverage: {covered} covered, {running} running, {queued} queued, {review} requiring review, {not_started} not started and {failed} failed.",
+        lang, covered=coverage_counts["covered"], running=coverage_counts["running"], queued=coverage_counts["queued"],
+        review=coverage_counts["review_required"], not_started=coverage_counts["not_started"], failed=coverage_counts["failed"],
     )
     return {
-        "plan": plan.public(),
+        "plan": plan.public(lang),
         "summary": summary,
         "rows": public_rows,
         "visual": {
             "kind": "bar",
-            "title": f"{METRICS[plan.metric]} by {DIMENSIONS[plan.dimension]}",
+            "title": t("{metric} by {dimension}", lang, metric=t(METRICS[plan.metric], lang), dimension=t(DIMENSIONS[plan.dimension], lang)),
             "rows": public_rows[:10],
         },
         "citations": _citations(plan),

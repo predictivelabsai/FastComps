@@ -1,4 +1,14 @@
 const initialParams = new URLSearchParams(location.search);
+let i18n = { lang: 'en', translations: {} };
+try { i18n = JSON.parse(document.getElementById('i18n-data')?.textContent || '{}'); } catch { /* default English */ }
+const tr = (text, values = {}) => {
+  let result = i18n.translations?.[text] || text;
+  Object.entries(values).forEach(([key, value]) => { result = result.replaceAll(`{${key}}`, value); });
+  return result;
+};
+const locale = { et: 'et-EE', lt: 'lt-LT', en: 'en-GB' }[i18n.lang] || 'en-GB';
+const regions = new Intl.DisplayNames([locale], { type: 'region' });
+const countryName = (code, fallback = '') => { try { return regions.of(code) || fallback || code; } catch { return fallback || code; } };
 const state = { country: (initialParams.get('country') || '').toUpperCase(), view: 'overview' };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
@@ -15,7 +25,7 @@ const get = async (path, values = {}) => {
   return response.json();
 };
 const date = value => value
-  ? new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
+  ? new Intl.DateTimeFormat(locale, { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))
   : '—';
 const safeUrl = value => {
   try {
@@ -28,7 +38,7 @@ const readableUrl = (value, preferred = '') => {
   try {
     const url = new URL(value);
     return `${url.hostname.replace(/^www\./, '')}${decodeURIComponent(url.pathname).replace(/\/$/, '')}`;
-  } catch { return 'Source'; }
+  } catch { return tr('Source'); }
 };
 const flag = code => /^[A-Z]{2}$/.test(code || '')
   ? String.fromCodePoint(...[...code].map(character => 127397 + character.charCodeAt()))
@@ -39,14 +49,14 @@ const updateUrl = () => {
   history.replaceState(null, '', `/dashboard${query}${hash}`);
 };
 const price = observation => {
-  if (observation.price_min == null) return 'Unavailable';
-  const format = number => new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(number);
+  if (observation.price_min == null) return tr('Unavailable');
+  const format = number => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(number);
   return `${format(observation.price_min)}${observation.price_max != null ? `–${format(observation.price_max)}` : ''} ${esc(observation.currency || '')}`;
 };
 
 async function loadMarkets() {
   const rows = await get('/api/coverage');
-  $('#country').innerHTML = '<option value="">🌍 All EEA</option>' + rows.map(row => `<option value="${row.country_code}">${flag(row.country_code)} ${esc(row.country_name)}</option>`).join('');
+  $('#country').innerHTML = `<option value="">🌍 ${esc(tr('All EEA'))}</option>` + rows.map(row => `<option value="${row.country_code}">${flag(row.country_code)} ${esc(countryName(row.country_code, row.country_name))}</option>`).join('');
   $('#country').value = state.country;
   renderCountryFilters(rows);
   renderCoverage(rows);
@@ -54,7 +64,7 @@ async function loadMarkets() {
 
 function renderCountryFilters(rows) {
   const host = $('#country-filter-bar');
-  host.innerHTML = `<button type="button" data-country="" class="country-filter">🌍 All <small>${rows.reduce((sum, row) => sum + Number(row.verified || 0), 0)}</small></button>` + rows.map(row => `<button type="button" data-country="${row.country_code}" class="country-filter" title="${esc(row.country_name)}">${flag(row.country_code)} ${row.country_code}<small>${row.verified}</small></button>`).join('');
+  host.innerHTML = `<button type="button" data-country="" class="country-filter">🌍 ${esc(tr('All'))} <small>${rows.reduce((sum, row) => sum + Number(row.verified || 0), 0)}</small></button>` + rows.map(row => `<button type="button" data-country="${row.country_code}" class="country-filter" title="${esc(countryName(row.country_code, row.country_name))}">${flag(row.country_code)} ${row.country_code}<small>${row.verified}</small></button>`).join('');
   host.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setCountry(button.dataset.country)));
   updateCountryFilters();
 }
@@ -72,14 +82,16 @@ function setCountry(country, shouldRefresh = true) {
 async function loadOverview() {
   const data = await get('/api/overview', { country: state.country });
   const cards = [
-    ['Verified competitors', data.competitors, 'Grounded provider records'],
-    ['Clinic locations', data.locations, 'Address-evidenced branches'],
-    ['Price observations', data.priced_observations, `${data.observations} total observations`],
-    ['Retained sources', data.sources, 'Auditable evidence pages'],
+    [tr('Verified competitors'), data.competitors, tr('Grounded provider records')],
+    [tr('Clinic locations'), data.locations, tr('Address-evidenced branches')],
+    [tr('Price observations'), data.priced_observations, `${data.observations} ${tr('total observations')}`],
+    [tr('Retained sources'), data.sources, tr('Auditable evidence pages')],
   ];
   $('#metrics').innerHTML = cards.map(card => `<article class="metric"><span class="metric-label">${card[0]}</span><strong>${Number(card[1]).toLocaleString()}</strong><small>${card[2]}</small></article>`).join('');
   const sync = data.sync || {};
-  $('#sync-status').textContent = sync.status === 'complete' ? `Evidence synced ${date(sync.last_completed_at)}` : `Sync ${sync.status || 'pending'}`;
+  $('#sync-status').textContent = sync.status === 'complete'
+    ? tr('Evidence synced {date}', { date: date(sync.last_completed_at) })
+    : tr('Sync {status}', { status: tr((sync.status || 'pending').replaceAll('_', ' ')) });
 }
 
 async function loadPrices(query = '') {
@@ -91,7 +103,7 @@ async function loadPrices(query = '') {
     <td><span class="badge">${esc(observation.price_type)}</span></td>
     <td>${flag(observation.country_code)} ${esc(observation.country_code)}</td>
     <td><a class="source-link" href="${safeUrl(observation.source_url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(observation.source_url, observation.source_label))} ↗</a><div class="subtext">${date(observation.retrieved_at)}</div></td>
-  </tr>`).join('') : '<tr><td colspan="6" class="empty">No observations for this filter.</td></tr>';
+  </tr>`).join('') : `<tr><td colspan="6" class="empty">${esc(tr('No observations for this filter.'))}</td></tr>`;
 }
 
 async function loadCompetitors(query = '') {
@@ -99,7 +111,7 @@ async function loadCompetitors(query = '') {
   $('#competitors').innerHTML = rows.length ? rows.map(competitor => `<tr>
     <td><a class="row-link" href="/competitors/${encodeURIComponent(competitor.id)}"><strong>${esc(competitor.name)}</strong></a><div class="subtext">${esc(competitor.domain || '')}</div></td>
     <td>${flag(competitor.country_code)} ${esc(competitor.country_code || '—')}</td><td>${competitor.locations}</td><td>${competitor.offerings}</td><td>${competitor.observations}</td><td>${date(competitor.last_observed_at)}</td>
-  </tr>`).join('') : '<tr><td colspan="6" class="empty">No competitors for this filter.</td></tr>';
+  </tr>`).join('') : `<tr><td colspan="6" class="empty">${esc(tr('No competitors for this filter.'))}</td></tr>`;
 }
 
 async function loadTreemap() {
@@ -107,7 +119,7 @@ async function loadTreemap() {
   const host = $('#treatment-treemap');
   if (!rows.length) {
     if (window.Plotly) Plotly.purge(host);
-    host.innerHTML = '<p class="empty">No priced treatments for this filter.</p>';
+    host.innerHTML = `<p class="empty">${esc(tr('No priced treatments for this filter.'))}</p>`;
     return;
   }
   const nodes = new Map();
@@ -126,9 +138,9 @@ async function loadTreemap() {
     const countryId = `country:${row.country_code}`;
     const typeId = `${countryId}:type:${row.treatment_type}`;
     const leafId = `${typeId}:treatment:${row.treatment}:${row.currency || ''}`;
-    add(countryId, `${flag(row.country_code)} ${row.country_code}`, '', count, level, 'Country', row.country_code);
-    add(typeId, row.treatment_type, countryId, count, level, 'Treatment type', row.country_code);
-    add(leafId, row.treatment, typeId, count, level, `${Number(row.median_price).toLocaleString('en', { maximumFractionDigits: 2 })} ${row.currency || ''} median · ${count} observations · ${row.sources} sources`, row.country_code, row.treatment);
+    add(countryId, `${flag(row.country_code)} ${row.country_code}`, '', count, level, tr('Country'), row.country_code);
+    add(typeId, row.treatment_type, countryId, count, level, tr('Treatment type'), row.country_code);
+    add(leafId, row.treatment, typeId, count, level, `${Number(row.median_price).toLocaleString(locale, { maximumFractionDigits: 2 })} ${row.currency || ''} ${tr('median')} · ${count} ${tr('observations')} · ${row.sources} ${tr('sources')}`, row.country_code, row.treatment);
   });
   const data = [...nodes.values()];
   await Plotly.react(host, [{
@@ -160,7 +172,7 @@ async function loadTreemap() {
     setCountry(country, false);
     $('#price-search').value = treatment;
     loadPrices(treatment);
-    $('#treemap-drilldown').textContent = `${flag(country)} ${country} · price evidence for “${treatment}”`;
+    $('#treemap-drilldown').textContent = `${flag(country)} ${country} · ${tr('price evidence for')} “${treatment}”`;
     $('#prices').closest('.panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
@@ -186,39 +198,39 @@ async function loadMap() {
       radius: 7, color: '#155b48', weight: 2, fillColor: '#35a77d', fillOpacity: .82,
     });
     const providerPath = `/competitors/${encodeURIComponent(item.competitor_id)}`;
-    marker.bindPopup(`<strong>${esc(item.competitor)}</strong><br>${esc([item.address, item.city].filter(Boolean).join(', '))}<br><span>${flag(item.country_code)} ${esc(item.country_code)}</span><br><a href="${providerPath}">View provider and prices →</a>`);
+    marker.bindPopup(`<strong>${esc(item.competitor)}</strong><br>${esc([item.address, item.city].filter(Boolean).join(', '))}<br><span>${flag(item.country_code)} ${esc(item.country_code)}</span><br><a href="${providerPath}">${esc(tr('View provider and prices →'))}</a>`);
     marker.addTo(marketMarkers);
   });
   if (rows.length) marketMap.fitBounds(marketMarkers.getBounds().pad(.08), { maxZoom: 13 });
   else marketMap.setView([54.5, 15], 4);
   $('#market-map-summary').textContent = rows.length
-    ? `${rows.length.toLocaleString()} geocoded clinic location${rows.length === 1 ? '' : 's'}${state.country ? ` in ${flag(state.country)} ${state.country}` : ' across the EEA'}`
-    : 'No geocoded clinic locations for this filter.';
+    ? tr('{count} geocoded clinic locations {scope}', { count: rows.length.toLocaleString(locale), scope: state.country ? `${tr('in')} ${flag(state.country)} ${state.country}` : tr('across the EEA') })
+    : tr('No geocoded clinic locations for this filter.');
 }
 
 function renderCoverage(rows) {
-  $('#coverage-grid').innerHTML = rows.map(row => `<article class="coverage-card"><div class="coverage-top"><span class="country-code">${flag(row.country_code)} ${row.country_code}</span><span class="status ${row.coverage_status}">${row.coverage_status.replaceAll('_', ' ')}</span></div><div class="coverage-name">${esc(row.country_name)}</div><div class="progress"><i style="width:${row.progress_pct}%"></i></div><div class="coverage-meta"><span>${row.verified}/${row.target} verified</span><span>${row.candidates} candidates</span></div></article>`).join('');
+  $('#coverage-grid').innerHTML = rows.map(row => `<article class="coverage-card"><div class="coverage-top"><span class="country-code">${flag(row.country_code)} ${row.country_code}</span><span class="status ${row.coverage_status}">${esc(tr(row.coverage_status.replaceAll('_', ' ')))}</span></div><div class="coverage-name">${esc(countryName(row.country_code, row.country_name))}</div><div class="progress"><i style="width:${row.progress_pct}%"></i></div><div class="coverage-meta"><span>${row.verified}/${row.target} ${esc(tr('verified'))}</span><span>${row.candidates} ${esc(tr('candidates'))}</span></div></article>`).join('');
 }
 async function loadCoverage() { renderCoverage(await get('/api/coverage')); }
 
 async function loadEvidence() {
   const rows = await get('/api/evidence', { country: state.country, limit: 60 });
-  $('#evidence-list').innerHTML = rows.length ? rows.map(item => `<article class="evidence-item"><span class="evidence-market">${esc(item.country_code || 'EEA')}</span><div><a href="${safeUrl(item.url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(item.url, item.display_url))}</a><p>${esc(item.excerpt || `${item.provider || 'Source'} evidence`)}</p></div><span class="evidence-time">${date(item.retrieved_at)}</span></article>`).join('') : '<p class="empty">No retained sources for this filter.</p>';
+  $('#evidence-list').innerHTML = rows.length ? rows.map(item => `<article class="evidence-item"><span class="evidence-market">${esc(item.country_code || 'EEA')}</span><div><a href="${safeUrl(item.url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(item.url, item.display_url))}</a><p>${esc(item.excerpt || `${item.provider || tr('Source')} ${tr('evidence')}`)}</p></div><span class="evidence-time">${date(item.retrieved_at)}</span></article>`).join('') : `<p class="empty">${esc(tr('No retained sources for this filter.'))}</p>`;
 }
 
 async function loadCandidates() {
   const rows = await get('/api/candidates', { country: state.country, limit: 100 });
-  $('#candidates').innerHTML = rows.length ? rows.map(item => `<tr><td><strong>${esc(item.name || item.official_domain || 'Unnamed lead')}</strong><div class="subtext">${esc(item.official_domain || '')}</div></td><td>${esc(item.country_code || '—')}</td><td><span class="badge">${esc(item.state)}</span></td><td>${item.source_count}</td><td>${date(item.last_seen_at)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No candidates for this filter.</td></tr>';
+  $('#candidates').innerHTML = rows.length ? rows.map(item => `<tr><td><strong>${esc(item.name || item.official_domain || tr('Unnamed lead'))}</strong><div class="subtext">${esc(item.official_domain || '')}</div></td><td>${esc(item.country_code || '—')}</td><td><span class="badge">${esc(tr(item.state))}</span></td><td>${item.source_count}</td><td>${date(item.last_seen_at)}</td></tr>`).join('') : `<tr><td colspan="5" class="empty">${esc(tr('No candidates for this filter.'))}</td></tr>`;
 }
 
 async function loadWatchlist() {
   const rows = await get('/api/watchlist', { country: state.country });
-  $('#watchlist-grid').innerHTML = rows.length ? rows.map(item => `<article class="watch-card"><div class="watch-top"><span class="country-code">${esc(item.country_code)}</span><span class="watch-priority">P${item.priority ?? '—'}</span></div><h3>${esc(item.name)}</h3><p>${esc(item.positioning || item.segment || 'Curated competitor')}</p><div class="tag-row">${(item.capabilities || []).slice(0, 4).map(capability => `<span>${esc(String(capability).replaceAll('_', ' '))}</span>`).join('')}</div><small>${item.observations} observations · ${date(item.last_observed_at)}</small></article>`).join('') : '<p class="empty">No active watchlist targets for this filter.</p>';
+  $('#watchlist-grid').innerHTML = rows.length ? rows.map(item => `<article class="watch-card"><div class="watch-top"><span class="country-code">${esc(item.country_code)}</span><span class="watch-priority">P${item.priority ?? '—'}</span></div><h3>${esc(item.name)}</h3><p>${esc(item.positioning || item.segment || tr('Curated competitor'))}</p><div class="tag-row">${(item.capabilities || []).slice(0, 4).map(capability => `<span>${esc(tr(String(capability).replaceAll('_', ' ')))}</span>`).join('')}</div><small>${item.observations} ${esc(tr('observations'))} · ${date(item.last_observed_at)}</small></article>`).join('') : `<p class="empty">${esc(tr('No active watchlist targets for this filter.'))}</p>`;
 }
 
 async function loadRuns() {
   const rows = await get('/api/runs', { limit: 30 });
-  $('#runs').innerHTML = rows.length ? rows.map(run => `<tr><td><strong>${esc(String(run.id).replace('fc:', '').slice(0, 22))}</strong><div class="subtext">${esc(run.actor || run.source_system)}</div></td><td>${esc(run.trigger_kind || '—')}</td><td><span class="badge">${esc(run.status)}</span></td><td>${date(run.started_at)}</td><td>${esc(run.error || Object.entries(run.stats || {}).map(([key, value]) => `${key}: ${value}`).slice(0, 3).join(' · ') || '—')}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No collection runs yet.</td></tr>';
+  $('#runs').innerHTML = rows.length ? rows.map(run => `<tr><td><strong>${esc(String(run.id).replace('fc:', '').slice(0, 22))}</strong><div class="subtext">${esc(run.actor || run.source_system)}</div></td><td>${esc(tr(run.trigger_kind || '—'))}</td><td><span class="badge">${esc(tr(run.status))}</span></td><td>${date(run.started_at)}</td><td>${esc(run.error || Object.entries(run.stats || {}).map(([key, value]) => `${key}: ${value}`).slice(0, 3).join(' · ') || '—')}</td></tr>`).join('') : `<tr><td colspan="5" class="empty">${esc(tr('No collection runs yet.'))}</td></tr>`;
 }
 
 async function refresh() {
@@ -261,7 +273,7 @@ function sseEvent(raw) {
 function streamCard(feed) {
   const card = document.createElement('div');
   card.className = 'assistant-message stream-message';
-  card.innerHTML = '<div class="analysis-meta"></div><div class="stream-progress"><div class="stream-progress-copy"><span>Understanding your question…</span><b>8%</b></div><div class="stream-track"><i style="width:8%"></i></div></div><p class="answer-text"></p>';
+  card.innerHTML = `<div class="analysis-meta"></div><div class="stream-progress"><div class="stream-progress-copy"><span>${esc(tr('Understanding your question…'))}</span><b>8%</b></div><div class="stream-track"><i style="width:8%"></i></div></div><p class="answer-text"></p>`;
   feed.appendChild(card);
   return card;
 }
@@ -271,14 +283,14 @@ function renderVisual(card, data) {
   const max = Math.max(...rows.map(row => Math.abs(Number(row.value))), 1);
   const host = document.createElement('div');
   host.className = 'analysis-visual';
-  host.innerHTML = `<div class="analysis-visual-head"><strong>${esc(data.title || 'Governed analysis')}</strong><span>${Number(data.evidence?.records || 0).toLocaleString()} records</span></div><div class="analysis-bars">${rows.map(row => `<div class="analysis-bar"><span title="${esc(row.label)}">${esc(row.label)}</span><i><b style="width:${Math.max(3, Math.abs(Number(row.value)) / max * 100)}%"></b></i><em>${new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(Number(row.value))}</em></div>`).join('')}</div>`;
+  host.innerHTML = `<div class="analysis-visual-head"><strong>${esc(data.title || tr('Governed analysis'))}</strong><span>${Number(data.evidence?.records || 0).toLocaleString(locale)} ${esc(tr('records'))}</span></div><div class="analysis-bars">${rows.map(row => `<div class="analysis-bar"><span title="${esc(row.label)}">${esc(row.label)}</span><i><b style="width:${Math.max(3, Math.abs(Number(row.value)) / max * 100)}%"></b></i><em>${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(Number(row.value))}</em></div>`).join('')}</div>`;
   card.appendChild(host);
 }
 function renderCitations(card, items) {
   if (!items?.length) return;
   const host = document.createElement('div');
   host.className = 'citations';
-  host.innerHTML = `<span class="eyebrow">SOURCES</span>${items.map(citation => `<a href="${safeUrl(citation.url)}" target="_blank" rel="noopener noreferrer">↗ ${esc(readableUrl(citation.url, citation.label))}</a>`).join('')}`;
+  host.innerHTML = `<span class="eyebrow">${esc(tr('SOURCES'))}</span>${items.map(citation => `<a href="${safeUrl(citation.url)}" target="_blank" rel="noopener noreferrer">↗ ${esc(readableUrl(citation.url, citation.label))}</a>`).join('')}`;
   card.appendChild(host);
 }
 function handleStreamEvent(card, event, answer) {
@@ -286,11 +298,11 @@ function handleStreamEvent(card, event, answer) {
   if (event.name === 'progress') {
     const progress = card.querySelector('.stream-progress');
     progress.hidden = false;
-    progress.querySelector('span').textContent = data.label || 'Working…';
+    progress.querySelector('span').textContent = data.label || tr('Working…');
     progress.querySelector('b').textContent = `${data.percent || 0}%`;
     progress.querySelector('i').style.width = `${Math.max(3, Math.min(100, data.percent || 0))}%`;
   } else if (event.name === 'plan') {
-    card.querySelector('.analysis-meta').innerHTML = `<span>${esc(data.metric_label)}</span><span>by ${esc(data.dimension_label)}</span>${data.country ? `<span>${esc(data.country)}</span>` : ''}`;
+    card.querySelector('.analysis-meta').innerHTML = `<span>${esc(data.metric_label)}</span><span>${esc(tr('by'))} ${esc(data.dimension_label)}</span>${data.country ? `<span>${esc(data.country)}</span>` : ''}`;
   } else if (event.name === 'visual') renderVisual(card, data);
   else if (event.name === 'token') {
     answer.text += data.token || '';
@@ -299,7 +311,7 @@ function handleStreamEvent(card, event, answer) {
   } else if (event.name === 'citations') renderCitations(card, data.items);
   else if (event.name === 'error') {
     card.querySelector('.stream-progress').hidden = true;
-    card.querySelector('.answer-text').textContent = data.message || 'The analysis could not be completed.';
+    card.querySelector('.answer-text').textContent = data.message || tr('The analysis could not be completed.');
   } else if (event.name === 'done') card.querySelector('.stream-progress').hidden = true;
 }
 
@@ -338,7 +350,7 @@ $('#assistant-form').addEventListener('submit', async event => {
     }
   } catch {
     card.querySelector('.stream-progress').hidden = true;
-    card.querySelector('.answer-text').textContent = 'I could not complete that analysis just now. The dashboard evidence remains available.';
+    card.querySelector('.answer-text').textContent = tr('I could not complete that analysis just now. The dashboard evidence remains available.');
   } finally {
     button.disabled = false;
     feed.scrollTop = feed.scrollHeight;
@@ -346,6 +358,6 @@ $('#assistant-form').addEventListener('submit', async event => {
 });
 
 Promise.all([loadMarkets(), refresh()]).catch(error => {
-  $('#sync-status').textContent = 'Evidence connection unavailable';
+  $('#sync-status').textContent = tr('Evidence connection unavailable');
   console.error(error);
 });

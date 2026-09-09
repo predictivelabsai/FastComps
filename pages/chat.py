@@ -46,7 +46,7 @@ def message_component(message: dict):
     )
 
 
-def chat_page(user: dict, threads: list[dict], messages: list[dict], *, thread_id: str = ""):
+def chat_page(user: dict, threads: list[dict], messages: list[dict], *, thread_id: str = "", lang: str = "en"):
     welcome = Div(
         Span("✦", cls="assistant-orb"),
         P("FASTCOMPS AI", cls="eyebrow"),
@@ -83,5 +83,5 @@ def chat_page(user: dict, threads: list[dict], messages: list[dict], *, thread_i
     )
     return app_page(
         "Chat", content, user=user, threads=threads, active="chat", current_thread=thread_id,
-        styles=("/static/chat.css",), scripts=("/static/chat.js",),
+        styles=("/static/chat.css",), scripts=("/static/chat.js",), lang=lang,
     )

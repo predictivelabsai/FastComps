@@ -33,7 +33,7 @@ def _price(row: dict) -> str:
     return f"{low}{spread} {row.get('currency') or ''}".strip()
 
 
-def competitor_page(user: dict, threads: list[dict], data: dict):
+def competitor_page(user: dict, threads: list[dict], data: dict, *, lang: str = "en"):
     competitor = data["competitor"]
     country = competitor.get("country_code") or ""
     website = _safe_url(competitor.get("website_url"))
@@ -111,4 +111,5 @@ def competitor_page(user: dict, threads: list[dict], data: dict):
         competitor["name"], content, user=user, threads=threads, active="dashboard",
         styles=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "/static/market.css"),
         scripts=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", "/static/competitor.js"),
+        lang=lang,
     )

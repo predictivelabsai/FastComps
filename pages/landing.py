@@ -30,6 +30,9 @@ from fasthtml.common import (
     Title,
 )
 
+from components.shell import language_switcher
+from i18n import t
+
 
 ACCENT = "#177357"
 TINT = "#f3f7f5"
@@ -44,21 +47,23 @@ FAVICON = "data:image/svg+xml," + quote(
 )
 
 
-def public_head(title: str, description: str = DESCRIPTION, *, styles: tuple[str, ...] = ()):
+def public_head(title: str, description: str = DESCRIPTION, *, styles: tuple[str, ...] = (), lang: str = "en"):
     canonical = CANONICAL_URL + ("/developers" if title.startswith("Developers") else "")
+    localized_title = t(title, lang)
+    localized_description = t(description, lang)
     return Head(
         Meta(charset="utf-8"),
         Meta(name="viewport", content="width=device-width,initial-scale=1"),
-        Meta(name="description", content=description),
+        Meta(name="description", content=localized_description),
         Meta(name="theme-color", content=ACCENT),
         Meta(property="og:type", content="website"),
         Meta(property="og:site_name", content="FastComps"),
-        Meta(property="og:title", content=title),
-        Meta(property="og:description", content=description),
+        Meta(property="og:title", content=localized_title),
+        Meta(property="og:description", content=localized_description),
         Meta(property="og:url", content=canonical),
         Meta(name="twitter:card", content="summary_large_image"),
-        Meta(name="twitter:title", content=title),
-        Meta(name="twitter:description", content=description),
+        Meta(name="twitter:title", content=localized_title),
+        Meta(name="twitter:description", content=localized_description),
         Link(rel="canonical", href=canonical),
         Link(rel="icon", type="image/svg+xml", href=FAVICON),
         Link(rel="preconnect", href="https://fonts.googleapis.com"),
@@ -68,17 +73,18 @@ def public_head(title: str, description: str = DESCRIPTION, *, styles: tuple[str
         ),
         Link(rel="stylesheet", href="/static/landing.css"),
         *(Link(rel="stylesheet", href=style) for style in styles),
-        Title(title),
+        Title(localized_title),
     )
 
 
-def public_nav():
+def public_nav(lang: str = "en"):
     return Nav(
         A(Span("F", cls="lp-mark"), Span("FastComps"), href="/", cls="lp-brand"),
         Div(
             A("Product", href="/#product", cls="lp-nav-link"),
             A("Coverage", href="/#coverage", cls="lp-nav-link"),
             A("Developers", href="/developers", cls="lp-nav-link"),
+            language_switcher(lang),
             A("Sign in", href="/auth/sign-in", cls="lp-signin"),
             A("Get started", href="/auth/sign-up", cls="lp-primary lp-nav-cta"),
             cls="lp-nav-actions",
@@ -87,7 +93,7 @@ def public_nav():
     )
 
 
-def public_footer():
+def public_footer(lang: str = "en"):
     return Footer(
         Div(
             A(Span("F", cls="lp-mark small"), Strong("FastComps"), href="/", cls="lp-brand"),
@@ -104,7 +110,7 @@ def public_footer():
     )
 
 
-def landing_page():
+def landing_page(lang: str = "en"):
     structured_data = json.dumps(
         {
             "@context": "https://schema.org",
@@ -113,14 +119,14 @@ def landing_page():
             "applicationCategory": "BusinessApplication",
             "operatingSystem": "Web",
             "url": CANONICAL_URL,
-            "description": DESCRIPTION,
+            "description": t(DESCRIPTION, lang),
         },
         separators=(",", ":"),
     )
     return Html(
-        public_head("FastComps · Source-backed clinic competitive intelligence"),
+        public_head("FastComps · Source-backed clinic competitive intelligence", lang=lang),
         Body(
-            public_nav(),
+            public_nav(lang),
             Main(
                 Section(
                     Div(
@@ -227,9 +233,9 @@ def landing_page():
                     cls="lp-final-cta",
                 ),
             ),
-            public_footer(),
+            public_footer(lang),
             Script(NotStr(structured_data), type="application/ld+json"),
             cls="landing-body",
         ),
-        lang="en",
+        lang=lang,
     )

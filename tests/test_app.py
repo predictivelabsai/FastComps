@@ -238,10 +238,11 @@ def test_operational_read_endpoints(monkeypatch, signed_in):
 
 
 def test_assistant_request(monkeypatch, signed_in):
-    monkeypatch.setattr(main,"answer",lambda q,c: {"answer":q,"country":c,"citations":[]})
+    monkeypatch.setattr(main,"answer",lambda q,c,lang: {"answer":q,"country":c,"lang":lang,"citations":[]})
     response = signed_in.post("/api/assistant",json={"question":"What changed?","country":"EE"})
     assert response.status_code == 200
     assert response.json()["country"] == "EE"
+    assert response.json()["lang"] == "en"
 
 
 def test_assistant_rejects_empty_question(signed_in):
@@ -252,7 +253,7 @@ def test_assistant_stream_is_sse(monkeypatch, signed_in):
     monkeypatch.setattr(
         main,
         "stream_answer",
-        lambda q, c: iter(
+        lambda q, c, lang: iter(
             [
                 'event: token\ndata: {"token":"Safe result"}\n\n',
                 'event: done\ndata: {"mode":"analytics"}\n\n',

@@ -8,6 +8,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from urllib.parse import quote
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
@@ -26,6 +27,7 @@ from pages.competitor import competitor_page
 from pages.dashboard import dashboard_page
 from pages.developers import developer_page
 from pages.landing import landing_page
+from i18n import LANGUAGES, get_lang, localize_tree, safe_return_path, set_lang
 import newsletter
 import repository
 
@@ -60,7 +62,7 @@ async def require_sign_in(request: Request, call_next):
         "/", "/developers", "/health", "/healthz", "/robots.txt", "/sitemap.xml",
         "/api/docs", "/api/redoc", "/api/openapi.json", "/api/openapi/v1.json", "/swagger.json",
     }
-    if path in public_paths or path.startswith(("/static/", "/auth/")):
+    if path in public_paths or path.startswith(("/static/", "/auth/", "/set-lang/")):
         return await call_next(request)
     if request.session.get("user"):
         return await call_next(request)
@@ -88,14 +90,17 @@ def _country(value: str | None) -> str | None:
     return value
 
 
-def _html(component, *, status_code: int = 200, headers: dict[str, str] | None = None) -> HTMLResponse:
-    return HTMLResponse(to_xml(component), status_code=status_code, headers=headers)
+def _html(component, *, request: Request | None = None, lang: str | None = None,
+          status_code: int = 200, headers: dict[str, str] | None = None) -> HTMLResponse:
+    code = lang or (get_lang(request.session, request) if request is not None else "en")
+    return HTMLResponse(to_xml(localize_tree(component, code)), status_code=status_code, headers=headers)
 
 
 def _access_response(request: Request, card, *, title: str) -> HTMLResponse:
+    lang = get_lang(request.session, request)
     if request.headers.get("HX-Request") == "true":
-        return _html(card)
-    return _html(access_page(card, title=title))
+        return _html(card, request=request, lang=lang)
+    return _html(access_page(card, title=title, lang=lang), request=request, lang=lang)
 
 
 def _redirect(request: Request, path: str) -> HTMLResponse | RedirectResponse:
@@ -212,7 +217,7 @@ def api_thread(thread_id: str, request: Request):
 @app.post("/api/assistant")
 def api_assistant(payload: AssistantRequest, request: Request):
     _rate_limit(request)
-    return answer(payload.question.strip(),_country(payload.country))
+    return answer(payload.question.strip(), _country(payload.country), get_lang(request.session, request))
 
 
 def _rate_limit(request: Request) -> None:
@@ -227,14 +232,15 @@ def api_assistant_stream(payload: AssistantRequest, request: Request):
     _rate_limit(request)
     question = payload.question.strip()
     country = _country(payload.country)
+    lang = get_lang(request.session, request)
     if payload.workspace == "chat":
         user_key = request.session["user"]["id"]
         thread_id = payload.thread_id or repository.create_chat_thread(user_key, question[:80])
         if not repository.add_chat_message(user_key, thread_id, "user", question):
             raise HTTPException(404, "Conversation not found")
-        source = _persisted_stream(user_key, thread_id, question, country)
+        source = _persisted_stream(user_key, thread_id, question, country, lang)
     else:
-        source = stream_answer(question, country)
+        source = stream_answer(question, country, lang)
     return StreamingResponse(
         source,
         media_type="text/event-stream",
@@ -242,11 +248,11 @@ def api_assistant_stream(payload: AssistantRequest, request: Request):
     )
 
 
-def _persisted_stream(user_key: str, thread_id: str, question: str, country: str | None):
+def _persisted_stream(user_key: str, thread_id: str, question: str, country: str | None, lang: str):
     yield f"event: thread\ndata: {json.dumps({'thread_id': thread_id})}\n\n"
     answer_text = ""
     citations: list[dict] = []
-    for chunk in stream_answer(question, country):
+    for chunk in stream_answer(question, country, lang):
         event_name = "message"
         data: dict = {}
         for line in chunk.splitlines():
@@ -277,7 +283,7 @@ def swagger_compatibility():
 
 
 def _safe_next(value: str) -> str:
-    return value if value.startswith("/") and not value.startswith("//") else "/"
+    return safe_return_path(value)
 
 
 def _sign_in_error(value: str) -> str:
@@ -291,7 +297,9 @@ def _sign_in_error(value: str) -> str:
 
 
 def _login_session(request: Request, user: dict) -> None:
+    lang = get_lang(request.session, request)
     request.session.clear()
+    request.session["lang"] = lang
     request.session["user"] = {
         "id": str(user["id"]),
         "email": user["email"],
@@ -316,7 +324,8 @@ async def sign_in(request: Request, next: str = "/", error: str = "", message: s
             )
         _login_session(request, user)
         return _redirect(request, next_path)
-    return _html(access_page(access_card("signin", next_path=next_path, error=_sign_in_error(error), message=message), title="Sign in"))
+    lang = get_lang(request.session, request)
+    return _html(access_page(access_card("signin", next_path=next_path, error=_sign_in_error(error), message=message), title="Sign in", lang=lang), request=request, lang=lang)
 
 
 @app.api_route("/auth/sign-up", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
@@ -346,7 +355,8 @@ async def sign_up(request: Request, error: str = ""):
             ),
             title="Check your email",
         )
-    return _html(access_page(access_card("signup", error=error), title="Create account"))
+    lang = get_lang(request.session, request)
+    return _html(access_page(access_card("signup", error=error), title="Create account", lang=lang), request=request, lang=lang)
 
 
 @app.api_route("/auth/forgot", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
@@ -363,21 +373,23 @@ async def forgot_password(request: Request):
             forgot_card(message="If that email is registered, a reset link is on its way."),
             title="Forgot password",
         )
-    return _html(access_page(forgot_card(), title="Forgot password"))
+    lang = get_lang(request.session, request)
+    return _html(access_page(forgot_card(), title="Forgot password", lang=lang), request=request, lang=lang)
 
 
 @app.get("/auth/verify", response_class=HTMLResponse, include_in_schema=False)
-def verify_email(token: str = ""):
+def verify_email(request: Request, token: str = ""):
     user = accounts.verify_email_token(token) if token else None
     if not user:
+        lang = get_lang(request.session, request)
         return _html(access_page(
             notice_card(
                 "Link expired",
                 "This verification link is invalid or has expired. Create the account again to receive a new one.",
                 action="/auth/sign-up", action_label="Create account",
             ),
-            title="Link expired",
-        ))
+            title="Link expired", lang=lang,
+        ), request=request, lang=lang)
     return RedirectResponse("/auth/sign-in?message=Email+verified.+You+can+sign+in+now.", status_code=303)
 
 
@@ -397,7 +409,8 @@ async def reset_password(request: Request, token: str = ""):
         return _redirect(request, "/auth/sign-in?message=Password+reset+successful.")
     if not token:
         return RedirectResponse("/auth/forgot", status_code=303)
-    return _html(access_page(reset_card(token=token), title="Reset password"))
+    lang = get_lang(request.session, request)
+    return _html(access_page(reset_card(token=token), title="Reset password", lang=lang), request=request, lang=lang)
 
 
 @app.get("/auth/google", include_in_schema=False)
@@ -405,7 +418,9 @@ def google_start(request: Request, next: str = "/"):
     if not google_oidc.enabled():
         return RedirectResponse("/auth/sign-in?error=not_configured", status_code=303)
     safe_next = _safe_next(next)
+    lang = get_lang(request.session, request)
     request.session.clear()
+    request.session["lang"] = lang
     state = google_oidc.new_state()
     request.session["google_oauth_state"] = state
     request.session["post_auth_path"] = safe_next
@@ -416,11 +431,15 @@ def google_start(request: Request, next: str = "/"):
 def google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
     expected_state = request.session.pop("google_oauth_state", None)
     if error or not code or not expected_state or not secrets.compare_digest(state, expected_state):
+        lang = get_lang(request.session, request)
         request.session.clear()
+        request.session["lang"] = lang
         return RedirectResponse("/auth/sign-in?error=state", status_code=303)
     identity = google_oidc.exchange_google_code(code)
     if not identity:
+        lang = get_lang(request.session, request)
         request.session.clear()
+        request.session["lang"] = lang
         return RedirectResponse("/auth/sign-in?error=account", status_code=303)
     next_path = request.session.pop("post_auth_path", "/")
     user_id = google_oidc.save_user(identity)
@@ -430,12 +449,26 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
 
 @app.get("/auth/logout", include_in_schema=False)
 def logout(request: Request):
+    lang = get_lang(request.session, request)
     request.session.clear()
+    request.session["lang"] = lang
     return RedirectResponse("/auth/sign-in", status_code=303)
 
 
+@app.get("/set-lang/{code}", include_in_schema=False)
+def set_language(code: str, request: Request, next: str = ""):
+    if code in LANGUAGES:
+        set_lang(request.session, code)
+    destination = safe_return_path(next) if next else "/"
+    if not next and (referer := request.headers.get("referer")):
+        parsed = urlsplit(referer)
+        if parsed.hostname == request.url.hostname:
+            destination = safe_return_path(parsed.path + (f"?{parsed.query}" if parsed.query else ""))
+    return RedirectResponse(destination, status_code=303)
+
+
 @app.get("/auth/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
-def unsubscribe_daily_scan(token: str = ""):
+def unsubscribe_daily_scan(request: Request, token: str = ""):
     email = newsletter.unsubscribe(token) if token else None
     if email:
         card = notice_card(
@@ -443,13 +476,15 @@ def unsubscribe_daily_scan(token: str = ""):
             "You will no longer receive the FastComps Daily Clinic Market Scan.",
             action="/auth/sign-in", action_label="Open FastComps",
         )
-        return _html(access_page(card, title="Daily scan paused"))
+        lang = get_lang(request.session, request)
+        return _html(access_page(card, title="Daily scan paused", lang=lang), request=request, lang=lang)
     card = notice_card(
         "Link unavailable",
         "This unsubscribe link is invalid. Sign in and contact us if you still need help.",
         action="/auth/sign-in", action_label="Open FastComps",
     )
-    return _html(access_page(card, title="Unsubscribe"))
+    lang = get_lang(request.session, request)
+    return _html(access_page(card, title="Unsubscribe", lang=lang), request=request, lang=lang)
 
 
 def _threads_for(user_id: str) -> list[dict]:
@@ -461,18 +496,20 @@ def _threads_for(user_id: str) -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index(request: Request, thread: str = ""):
+    lang = get_lang(request.session, request)
     user = request.session.get("user")
     if not user:
-        return _html(landing_page())
+        return _html(landing_page(lang), request=request, lang=lang)
     threads = _threads_for(user["id"])
     messages = repository.chat_messages(user["id"], thread) if thread else []
-    return _html(chat_page(user, threads, messages, thread_id=thread))
+    return _html(chat_page(user, threads, messages, thread_id=thread, lang=lang), request=request, lang=lang)
 
 
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     user = request.session["user"]
-    return _html(dashboard_page(user, _threads_for(user["id"])))
+    lang = get_lang(request.session, request)
+    return _html(dashboard_page(user, _threads_for(user["id"]), lang=lang), request=request, lang=lang)
 
 
 @app.get("/competitors/{competitor_id}", response_class=HTMLResponse, include_in_schema=False)
@@ -481,10 +518,12 @@ def competitor_detail(competitor_id: str, request: Request):
     if not data:
         raise HTTPException(404, "Competitor not found")
     user = request.session["user"]
-    return _html(competitor_page(user, _threads_for(user["id"]), data))
+    lang = get_lang(request.session, request)
+    return _html(competitor_page(user, _threads_for(user["id"]), data, lang=lang), request=request, lang=lang)
 
 
 @app.get("/developers", response_class=HTMLResponse, include_in_schema=False)
 def developers(request: Request):
     user = request.session.get("user")
-    return _html(developer_page(user, _threads_for(user["id"]) if user else []))
+    lang = get_lang(request.session, request)
+    return _html(developer_page(user, _threads_for(user["id"]) if user else [], lang=lang), request=request, lang=lang)

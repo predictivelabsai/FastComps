@@ -94,3 +94,10 @@ body { margin: 0; }
   .lp-model div { align-items: flex-start; flex-direction: column; gap: 5px; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+.language-switcher { position: relative; }
+.language-switcher summary { align-items: center; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); cursor: pointer; display: flex; font-size: 12px; font-weight: 700; gap: 6px; list-style: none; padding: 7px 10px; }
+.language-switcher summary::-webkit-details-marker { display: none; }
+.language-menu { background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 14px 36px rgba(16,34,27,.14); min-width: 148px; padding: 6px; position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; }
+.language-option { align-items: center; border-radius: 8px; color: var(--ink); display: flex; font-size: 12px; gap: 8px; padding: 8px 9px; text-decoration: none; }
+.language-option:hover, .language-option.active { background: var(--tint); color: var(--accent); }
+@media (max-width: 820px) { .language-name { display: none; } .language-switcher summary { padding: 7px 9px; } }

@@ -36,6 +36,8 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 - `/developers`: public developer guide, API resource catalogue, quick starts and links to public Swagger, ReDoc and versioned OpenAPI contracts. Data calls remain authenticated.
 - `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
 
+English, Estonian and Lithuanian are available from the flag selector on every public, account and signed-in surface. The selection is stored in the signed session, preserves the current dashboard filter/tab, localises browser-generated country names and number/date formatting, and also controls streamed analyst responses. Checked-in catalogs live in `locales/`.
+
 ## Daily Clinic Market Scan
 
 The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). It summarizes fresh source-backed observations, active competitors and markets, retained sources, readable evidence links, and the markets with the largest coverage gaps. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.

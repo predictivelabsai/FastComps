@@ -2,20 +2,42 @@
 
 from __future__ import annotations
 
+import json
+
 from fasthtml.common import (
-    A, Aside, Body, Button, Div, Footer, Head, Html, Link, Meta, Nav,
-    P, Script, Small, Span, Strong, Title,
+    A, Aside, Body, Button, Details, Div, Footer, Head, Html, Link, Meta, Nav,
+    NotStr, P, Script, Small, Span, Strong, Summary, Title,
 )
+
+from i18n import LANGUAGES, js_catalog, t
 
 
 HTMX_URL = "https://unpkg.com/htmx.org@2.0.4"
 
 
-def page_head(title: str, *, styles: tuple[str, ...] = (), scripts: tuple[str, ...] = ()):
+def language_switcher(lang: str = "en"):
+    current = LANGUAGES.get(lang, LANGUAGES["en"])
+    return Details(
+        Summary(Span(current["flag"]), Span(current["native"], cls="language-name"), aria_label=t("Choose language", lang)),
+        Div(*(
+            A(
+                Span(info["flag"]), Span(info["native"]),
+                href=f"/set-lang/{code}", lang=code,
+                onclick=f"this.href='/set-lang/{code}?next='+encodeURIComponent(location.pathname+location.search+location.hash)",
+                aria_current="true" if code == lang else None,
+                cls=f"language-option{' active' if code == lang else ''}",
+            )
+            for code, info in LANGUAGES.items()
+        ), cls="language-menu"),
+        cls="language-switcher",
+    )
+
+
+def page_head(title: str, *, lang: str = "en", styles: tuple[str, ...] = (), scripts: tuple[str, ...] = ()):
     return Head(
         Meta(charset="utf-8"),
         Meta(name="viewport", content="width=device-width,initial-scale=1"),
-        Title(f"{title} · FastComps"),
+        Title(f"{t(title, lang)} · FastComps"),
         Link(rel="icon", href="/static/favicon.svg"),
         Link(rel="stylesheet", href="/static/app.css"),
         Link(rel="stylesheet", href="/static/shell.css"),
@@ -25,7 +47,7 @@ def page_head(title: str, *, styles: tuple[str, ...] = (), scripts: tuple[str, .
     )
 
 
-def sidebar(user: dict, threads: list[dict], *, active: str, current_thread: str = ""):
+def sidebar(user: dict, threads: list[dict], *, active: str, current_thread: str = "", lang: str = "en"):
     def item(key: str, label: str, href: str, icon: str):
         return A(
             Span(icon), label, href=href,
@@ -43,8 +65,9 @@ def sidebar(user: dict, threads: list[dict], *, active: str, current_thread: str
     return Aside(
         Div(
             A(Span("F"), "FastComps", href="/", cls="brand"),
+            language_switcher(lang),
             Button("×", cls="side-close", onclick="toggleSidebar()", aria_label="Close navigation"),
-            A(Span("＋"), " New Chat", href="/", cls="new-chat-btn"),
+            A(Span("＋"), "New Chat", href="/", cls="new-chat-btn"),
             cls="side-head",
         ),
         Nav(
@@ -89,17 +112,20 @@ def app_page(
     styles: tuple[str, ...] = (),
     scripts: tuple[str, ...] = (),
     body_cls: str = "",
+    lang: str = "en",
 ):
     return Html(
-        page_head(title, styles=styles, scripts=scripts),
+        page_head(title, lang=lang, styles=styles, scripts=scripts),
         Body(
             Div(
-                sidebar(user, threads, active=active, current_thread=current_thread),
+                sidebar(user, threads, active=active, current_thread=current_thread, lang=lang),
                 content,
                 cls="app-shell",
             ),
             Div(id="left-overlay", cls="left-overlay", onclick="toggleSidebar()"),
+            Script(NotStr(json.dumps({"lang": lang, "translations": js_catalog(lang)}, ensure_ascii=False).replace("</", "<\\/")), id="i18n-data", type="application/json"),
             Script("""function toggleSidebar(){document.querySelector('.side-nav').classList.toggle('open');document.getElementById('left-overlay').classList.toggle('open')}"""),
             cls=body_cls,
         ),
+        lang=lang,
     )

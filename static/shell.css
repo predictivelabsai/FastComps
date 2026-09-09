@@ -13,9 +13,10 @@
   height: 100vh;
   position: sticky;
   top: 0;
+  width: 280px;
   z-index: 80;
 }
-.side-head { padding: 20px 16px 12px; }
+.side-head { padding: 20px 16px 12px; position: relative; }
 .side-head .brand { margin: 0 8px 22px; }
 .side-close { display: none; }
 .new-chat-btn {
@@ -93,6 +94,15 @@
 .left-overlay { background: rgba(9, 27, 21, .38); display: none; inset: 0; position: fixed; z-index: 70; }
 .mobile-header { align-items: center; border-bottom: 1px solid var(--line); display: none; min-height: 62px; padding: 0 14px; }
 .signed-in { color: var(--muted); font-size: 11px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.language-switcher { position: relative; z-index: 90; }
+.side-head > .language-switcher { position: absolute; right: 16px; top: 19px; }
+.side-head .language-name { display: none; }
+.language-switcher summary { align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); cursor: pointer; display: flex; font-size: 11px; gap: 6px; list-style: none; padding: 6px 9px; user-select: none; }
+.language-switcher summary::-webkit-details-marker { display: none; }
+.language-menu { background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 16px 40px rgba(16,57,45,.14); display: flex; flex-direction: column; min-width: 135px; padding: 4px; position: absolute; right: 0; top: calc(100% + 6px); }
+.language-option { align-items: center; border-radius: 7px; color: var(--muted); display: flex; font-size: 11px; gap: 8px; padding: 7px 9px; text-decoration: none; }
+.language-option:hover, .language-option.active { background: var(--mint); color: var(--deep); font-weight: 700; }
+.auth-language { position: fixed; right: 20px; top: 18px; z-index: 100; }
 
 @media (max-width: 900px) {
   .side-nav {
@@ -114,6 +124,7 @@
     right: 12px;
     top: 15px;
   }
+  .side-head > .language-switcher { right: 50px; }
   .left-overlay.open { display: block; }
   .mobile-menu-btn { display: inline-grid; place-items: center; }
   .mobile-header { display: flex; gap: 8px; }

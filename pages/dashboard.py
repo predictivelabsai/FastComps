@@ -22,7 +22,7 @@ def _heading(eyebrow: str, title: str):
     return Div(P(eyebrow, cls="eyebrow"), H2(title))
 
 
-def dashboard_page(user: dict, threads: list[dict]):
+def dashboard_page(user: dict, threads: list[dict], *, lang: str = "en"):
     topbar = Header(
         mobile_menu(),
         Nav(
@@ -137,4 +137,5 @@ def dashboard_page(user: dict, threads: list[dict]):
         "Dashboard", content, user=user, threads=threads, active="dashboard",
         styles=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "/static/market.css"),
         scripts=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", "https://cdn.plot.ly/plotly-2.35.2.min.js", "/static/app.js"),
+        lang=lang,
     )

@@ -22,7 +22,7 @@ RESOURCES = (
 )
 
 
-def developer_page(user: dict | None = None, threads: list[dict] | None = None):
+def developer_page(user: dict | None = None, threads: list[dict] | None = None, *, lang: str = "en"):
     cards = Section(
         *(
             Article(H3(title), P(copy), Code(Strong(method), f" {path}"), cls="dev-card")
@@ -82,11 +82,12 @@ def developer_page(user: dict | None = None, threads: list[dict] | None = None):
                 "Developers · FastComps",
                 "FastComps API resources, OpenAPI contracts and streamed conversational-analysis event documentation.",
                 styles=("/static/developers.css",),
+                lang=lang,
             ),
-            Body(public_nav(), content, public_footer(), cls="landing-body"),
-            lang="en",
+            Body(public_nav(lang), content, public_footer(lang), cls="landing-body"),
+            lang=lang,
         )
     return app_page(
         "Developers", content, user=user, threads=threads or [], active="developers",
-        styles=("/static/developers.css",),
+        styles=("/static/developers.css",), lang=lang,
     )
