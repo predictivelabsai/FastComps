@@ -54,10 +54,25 @@ def render_market_map_png(scan: dict) -> bytes:
     draw.rounded_rectangle((18, 18, WIDTH - 18, HEIGHT - 18), radius=22, fill="#ffffff", outline="#d8e5df", width=2)
     draw.text((48, 42), "DAILY COMPARABLE-PRICE MAP", font=_font(18, bold=True), fill="#177357")
     draw.text((48, 72), "Country  ›  treatment type  ›  treatment", font=_font(30, bold=True), fill="#12241f")
-    draw.text((48, 113), "Every price range below is published by at least two different clinics.", font=_font(16), fill="#65756f")
+    draw.text((48, 113), "Published EUR price evidence; comparison ranges use different clinics.", font=_font(16), fill="#65756f")
 
     countries: OrderedDict[str, list[dict]] = OrderedDict()
-    for signal in scan.get("signals", []):
+    featured_types: OrderedDict[str, list[dict]] = OrderedDict()
+    for row in scan.get("featured_prices", []):
+        featured_types.setdefault(str(row.get("treatment_type") or "Treatment"), []).append(row)
+    map_rows = []
+    for treatment_type, items in featured_types.items():
+        prices = [float(item.get("price") or 0) for item in items if float(item.get("price") or 0) > 0]
+        if not prices:
+            continue
+        map_rows.append({
+            "country_code": scan.get("featured_country") or "LT",
+            "treatment_type": treatment_type,
+            "treatment": items[0].get("treatment") if len(items) == 1 else f"{len(items)} featured treatments",
+            "lowest_price": min(prices), "highest_price": max(prices),
+        })
+    map_rows.extend(scan.get("signals", []))
+    for signal in map_rows:
         countries.setdefault(str(signal.get("country_code") or "EEA"), []).append(signal)
     if not countries:
         draw.text((48, 190), "No comparable cross-clinic price signals are available yet.", font=_font(22), fill="#65756f")
@@ -83,7 +98,7 @@ def render_market_map_png(scan: dict) -> bytes:
                 draw.rounded_rectangle((x, y, x2, y + row_height), radius=12, fill="#edf5f1", outline="#b9d4c9", width=2)
                 draw.rounded_rectangle((x, y, x2, y + 38), radius=12, fill="#177357")
                 draw.rectangle((x, y + 25, x2, y + 38), fill="#177357")
-                draw.text((x + 12, y + 9), f"{country}  ·  {len(items)} comparison{'s' if len(items) != 1 else ''}", font=_font(15, bold=True), fill="#ffffff")
+                draw.text((x + 12, y + 9), f"{country}  ·  {len(items)} price signal{'s' if len(items) != 1 else ''}", font=_font(15, bold=True), fill="#ffffff")
                 child_top = y + 46
                 child_height = (row_height - 54) / len(items)
                 for index, item in enumerate(items):

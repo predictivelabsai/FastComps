@@ -306,5 +306,10 @@
   "Loading daily treemap…": "Įkeliamas dienos apžvalgos medžio žemėlapis…",
   "Select a treatment tile to open its matching clinic comparison.": "Pasirinkite procedūros lauką, kad atvertumėte atitinkamą klinikų palyginimą.",
   "Lower EUR price level": "Žemesnis EUR kainų lygis",
-  "Higher EUR price level": "Aukštesnis EUR kainų lygis"
+  "Higher EUR price level": "Aukštesnis EUR kainų lygis",
+  "FEATURED COUNTRY": "IŠSKIRTA ŠALIS",
+  "Explore Lithuania on the dashboard →": "Peržiūrėti Lietuvą suvestinėje →",
+  "Ten sourced treatment prices from today’s featured clinic market.": "Dešimt šaltiniais pagrįstų procedūrų kainų iš šiandien išskirtos klinikų rinkos.",
+  "No featured prices are available yet.": "Išskirtų kainų kol kas nėra.",
+  "OTHER EEA MARKETS": "KITOS EEE RINKOS"
 }

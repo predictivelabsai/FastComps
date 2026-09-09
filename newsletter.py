@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import os
+import random
 import re
 from datetime import date
 from urllib.parse import urlsplit
@@ -53,6 +54,9 @@ def _benchmark_rows(rows: list[dict], limit: int) -> list[dict]:
     grouped: dict[tuple[str, str], list[dict]] = {}
     labels: dict[tuple[str, str], str] = {}
     for row in rows:
+        if (row.get("price_min") is None or row.get("high_price") is None
+                or float(row["price_min"]) <= 0 or float(row["high_price"]) <= 0):
+            continue
         key, label = _comparison_treatment(row.get("treatment"))
         if not key:
             continue
@@ -111,6 +115,7 @@ def _signal_rows(hours: int, limit: int, *, fresh_only: bool, country: str | Non
           LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
           JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
           WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL
+            AND o.price_min>0 AND COALESCE(o.price_max,o.price_min)>0
             AND COALESCE(o.currency,'')<>'' {freshness} {country_filter}
         )
         SELECT competitor_id,competitor,country_code,treatment,mapped_type,price_min,high_price,
@@ -119,6 +124,61 @@ def _signal_rows(hours: int, limit: int, *, fresh_only: bool, country: str | Non
         ORDER BY retrieved_at DESC NULLS LAST,competitor,treatment
     """, {"hours": hours, "limit": limit, "country": country})
     return _benchmark_rows(rows, limit)
+
+
+def _featured_price_rows(country: str, limit: int = 10) -> list[dict]:
+    rows = fetch_all(f"""
+        WITH history_ranked AS (
+          SELECT c.id AS competitor_id,c.name AS competitor,c.country_code,f.name AS treatment,
+            COALESCE(cat.name,'') AS mapped_type,
+            ROUND(o.price_min/fx.units_per_eur,2) AS price,
+            o.source_url,o.retrieved_at,fx.effective_date AS fx_effective_date,
+            ROW_NUMBER() OVER (PARTITION BY c.id,f.id,COALESCE(o.original_name,''),o.currency
+              ORDER BY o.retrieved_at DESC NULLS LAST,o.id DESC) AS history_rank
+          FROM {SCHEMA}.observations o
+          JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
+          JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
+          LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
+          JOIN {SCHEMA}.exchange_rates fx ON fx.currency=o.currency
+          WHERE c.vertical_id='clinics' AND c.country_code=%(country)s
+            AND o.price_min>0 AND COALESCE(o.currency,'')<>''
+        ), diversified AS (
+          SELECT *,ROW_NUMBER() OVER (PARTITION BY competitor_id
+            ORDER BY retrieved_at DESC NULLS LAST,treatment) AS clinic_rank
+          FROM history_ranked WHERE history_rank=1 AND price>0
+        )
+        SELECT competitor_id,competitor,country_code,treatment,mapped_type,price,
+          source_url,retrieved_at,fx_effective_date,'EUR'::text AS currency
+        FROM diversified
+        ORDER BY clinic_rank,retrieved_at DESC NULLS LAST,competitor,treatment
+        LIMIT %(limit)s
+    """, {"country": country, "limit": min(20, max(1, limit))})
+    for row in rows:
+        row["treatment_type"] = treatment_type(row.get("treatment"), row.pop("mapped_type", None))
+    return rows
+
+
+def _country_mixture(rows: list[dict], limit: int, *, seed: int) -> list[dict]:
+    """Return a deterministic daily shuffle while retaining market breadth."""
+    rng = random.Random(seed)
+    by_country: dict[str, list[dict]] = {}
+    for row in rows:
+        by_country.setdefault(str(row.get("country_code") or "EEA"), []).append(row)
+    countries = list(by_country)
+    rng.shuffle(countries)
+    for values in by_country.values():
+        rng.shuffle(values)
+    mixture: list[dict] = []
+    while countries and len(mixture) < limit:
+        next_round = []
+        for country in countries:
+            values = by_country[country]
+            if values and len(mixture) < limit:
+                mixture.append(values.pop())
+            if values:
+                next_round.append(country)
+        countries = next_round
+    return mixture
 
 
 def build_daily_scan(*, hours: int = 36, signal_limit: int = 10) -> dict:
@@ -139,40 +199,22 @@ def build_daily_scan(*, hours: int = 36, signal_limit: int = 10) -> dict:
     fallback = not candidates
     if fallback:
         candidates = _signal_rows(hours, candidate_limit, fresh_only=False)
-    # Keep Lithuania as the lead market even on a day when its last retained
-    # benchmark falls just outside the freshness window.
-    preferred_fallback = False
-    lithuania = [row for row in candidates if row.get("country_code") == "LT"][:1]
-    if not lithuania:
-        lithuania = _signal_rows(hours, 1, fresh_only=False, country="LT")
-        if lithuania:
-            preferred_fallback = True
-    preferred_keys = {(row.get("country_code"), row.get("treatment"), row.get("currency")) for row in lithuania}
-    remaining = [
-        row for row in candidates
-        if (row.get("country_code"), row.get("treatment"), row.get("currency")) not in preferred_keys
+    featured_country = "LT"
+    featured_prices = _featured_price_rows(featured_country, 10)
+    other_markets = [row for row in candidates if row.get("country_code") != featured_country]
+    signals = _country_mixture(other_markets, signal_limit, seed=int(date.today().strftime("%Y%m%d")))
+    fx_dates = [
+        str(row["fx_effective_date"])
+        for row in featured_prices + signals if row.get("fx_effective_date")
     ]
-    # Breadth first: the first comparable benchmark from each country, then
-    # fill any remaining card slots with other valid comparisons.
-    seen_countries = {"LT"} if lithuania else set()
-    country_leads = []
-    overflow = []
-    for row in remaining:
-        country_code = row.get("country_code")
-        if country_code not in seen_countries:
-            country_leads.append(row)
-            seen_countries.add(country_code)
-        else:
-            overflow.append(row)
-    signals = (lithuania + country_leads + overflow)[:signal_limit]
-    fx_dates = [str(row["fx_effective_date"]) for row in signals if row.get("fx_effective_date")]
     return {
         "date": date.today().isoformat(),
         "hours": hours,
         "stats": stats,
+        "featured_country": featured_country,
+        "featured_prices": featured_prices,
         "signals": signals,
         "fallback": fallback,
-        "preferred_fallback": preferred_fallback,
         "fx_effective_date": max(fx_dates, default=None),
     }
 
@@ -233,6 +275,11 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
             <tr><td style="padding:6px 0;border-top:1px solid #edf2ef;font-size:10px;color:#65756f">HIGHEST</td><td style="padding:6px 8px;border-top:1px solid #edf2ef;font-size:11px"><a href="{high_url}" style="color:#177357;font-weight:700;text-decoration:none">{high_clinic} ↗</a></td><td style="padding:6px 0;border-top:1px solid #edf2ef;text-align:right;font-size:12px;color:#12241f;font-weight:800">{html.escape(_money(item.get('highest_price'), currency))}</td></tr>
           </table>
         </div>"""
+    featured = ""
+    for item in scan.get("featured_prices") or []:
+        source_url = html.escape(_source_href(item.get("source_url")), quote=True)
+        featured += f"""
+        <tr><td style="padding:9px 8px 9px 0;border-top:1px solid #edf2ef;vertical-align:top"><div style="font-size:10px;color:#177357;font-weight:800">{html.escape(item.get('treatment_type') or 'General medicine & other treatments')}</div><div style="font-size:13px;color:#12241f;font-weight:700;margin-top:3px">{html.escape(item.get('treatment') or 'Treatment')}</div><a href="{source_url}" style="font-size:10px;color:#65756f;text-decoration:none">{html.escape(item.get('competitor') or 'Clinic')} ↗</a></td><td style="padding:9px 0;border-top:1px solid #edf2ef;text-align:right;vertical-align:middle;font-size:13px;color:#12241f;font-weight:800;white-space:nowrap">{html.escape(_money(item.get('price'), 'EUR'))}</td></tr>"""
     scan_date = date.fromisoformat(scan["date"]).strftime("%d %b %Y")
     intro = (
         f"Fresh evidence retained during the last {scan['hours']} hours."
@@ -249,10 +296,16 @@ def render_daily_scan_html(scan: dict, *, recipient_email: str) -> str:
   </div>
   <div style="padding:17px 4px 8px"><p style="font-size:13px;color:#445650;line-height:1.6;margin:0">{intro} Every signal below links to its public source. Prices are converted to EUR using <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html" style="color:#177357">ECB reference rates</a>{f' effective {html.escape(str(scan["fx_effective_date"]))}' if scan.get('fx_effective_date') else ''}; original prices remain retained as evidence.</p></div>
   <table role="presentation" style="border-collapse:collapse;width:100%;table-layout:fixed;margin:5px -5px 14px"><tr>{cards}</tr></table>
+  <div style="background:#fff;border:1px solid #dce7e2;border-radius:10px;padding:14px;margin-bottom:14px">
+    <div style="font-size:10px;color:#177357;font-weight:800;letter-spacing:.7px">FEATURED COUNTRY · 🇱🇹 LITHUANIA</div>
+    <div style="font:700 20px Georgia,serif;color:#12241f;margin:4px 0 9px">10 published treatment prices</div>
+    <table role="presentation" style="border-collapse:collapse;width:100%">{featured or '<tr><td style="color:#65756f;font-size:11px">No featured prices available yet.</td></tr>'}</table>
+    <div style="text-align:center;margin-top:12px"><a href="{PUBLIC_URL}/dashboard?country=LT" style="background:#177357;border-radius:8px;color:#fff;display:inline-block;font-size:11px;font-weight:750;padding:10px 15px;text-decoration:none">Explore Lithuania on FastComps →</a></div>
+  </div>
   <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Country · treatment type · treatment map</div></div>
   <a href="{PUBLIC_URL}/dashboard" style="display:block;margin-bottom:14px"><img src="cid:fastcomps-market-map" alt="Daily country, treatment type and treatment price map" width="1200" style="display:block;width:100%;height:auto;border:0;border-radius:9px"></a>
   <div style="font-size:10px;color:#65756f;margin:-6px 3px 15px">Image unavailable? The evidence cards below follow the same country → treatment type → treatment hierarchy.</div>
-  <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Daily evidence scan · {len(scan['signals'])} signals</div></div>
+  <div style="background:#177357;border-radius:8px;padding:10px 12px;margin-bottom:9px"><div style="font-size:11px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.7px">Other EEA comparisons · {len(scan['signals'])} signals</div></div>
   {signals or '<p style="color:#65756f;font-size:12px">No retained signals are available yet.</p>'}
   <div style="text-align:center;margin-top:20px;padding:17px 0;border-top:1px solid #dce7e2">
     <a href="{PUBLIC_URL}/dashboard" style="background:#177357;border-radius:8px;color:#fff;display:inline-block;font-size:12px;font-weight:750;padding:11px 17px;text-decoration:none">Open FastComps dashboard →</a>
@@ -266,6 +319,14 @@ def render_daily_scan_text(scan: dict) -> str:
     fx_note = f" (effective {scan['fx_effective_date']})" if scan.get("fx_effective_date") else ""
     lines = [f"FastComps Daily Clinic Market Scan — {scan['date']}",
              f"All prices converted to EUR using ECB reference rates{fx_note}; original prices are retained.", ""]
+    lines.extend(("Featured country — Lithuania", ""))
+    for item in scan.get("featured_prices") or []:
+        lines.extend((
+            f"{item.get('treatment_type')} · {item.get('treatment')}",
+            f"{item.get('competitor')} · {_money(item.get('price'), 'EUR')}",
+            _source_href(item.get("source_url")), "",
+        ))
+    lines.extend((f"Explore Lithuania: {PUBLIC_URL}/dashboard?country=LT", "", "Other EEA comparisons", ""))
     for item in scan["signals"]:
         lines.extend((
             f"{item.get('country_code')} · {item.get('treatment_type')} · {item.get('treatment')}",

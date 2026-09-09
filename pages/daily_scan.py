@@ -50,6 +50,7 @@ def _endpoint(label: str, clinic: str | None, price, source_url: str | None):
 
 def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = "en"):
     signals = scan.get("signals") or []
+    featured_prices = scan.get("featured_prices") or []
     stats = scan.get("stats") or {}
     scan_date = date.fromisoformat(scan["date"]).strftime("%d %b %Y")
 
@@ -80,6 +81,36 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
             ("Sources", stats.get("sources")),
         )
     )
+    featured_cards = tuple(
+        Article(
+            Div(
+                Span(row.get("treatment_type") or "General medicine & other treatments", cls="scan-type"),
+                Strong(_money(row.get("price"))),
+                cls="featured-price-head",
+            ),
+            H2(row.get("treatment") or "Treatment"),
+            A(
+                f"{row.get('competitor') or 'Clinic'} ↗",
+                href=_safe_url(row.get("source_url")), target="_blank", rel="noopener noreferrer",
+                cls="featured-source",
+            ) if _safe_url(row.get("source_url")) else Span(row.get("competitor") or "Clinic", cls="featured-source"),
+            id=f"featured-price-{index}", cls="featured-price-card",
+        )
+        for index, row in enumerate(featured_prices)
+    )
+    treemap_rows = [
+        {
+            "country_code": row.get("country_code") or "LT",
+            "treatment_type": row.get("treatment_type"), "treatment": row.get("treatment"),
+            "lowest_price": row.get("price"), "highest_price": row.get("price"),
+            "lowest_clinic": row.get("competitor"), "highest_clinic": row.get("competitor"),
+            "clinic_count": 1, "target_id": f"featured-price-{index}",
+        }
+        for index, row in enumerate(featured_prices)
+    ] + [
+        {**row, "target_id": f"scan-signal-{index}"}
+        for index, row in enumerate(signals)
+    ]
     content = Div(
         Header(
             mobile_menu(),
@@ -100,6 +131,16 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
             Section(*metrics, cls="scan-metrics"),
             Section(
                 Div(
+                    Div(P("FEATURED COUNTRY", cls="eyebrow"), H2("🇱🇹 Lithuania")),
+                    A("Explore Lithuania on the dashboard →", href="/dashboard?country=LT", cls="scan-cta"),
+                    cls="scan-panel-head",
+                ),
+                P("Ten sourced treatment prices from today’s featured clinic market.", cls="featured-intro"),
+                Div(*featured_cards, cls="featured-price-grid") if featured_cards else P("No featured prices are available yet.", cls="scan-empty"),
+                cls="scan-panel featured-panel",
+            ),
+            Section(
+                Div(
                     Div(P("PRICE LANDSCAPE", cls="eyebrow"), H2("Country → treatment type → treatment")),
                     Span("All displayed prices are converted to EUR", cls="scan-panel-note"),
                     cls="scan-panel-head",
@@ -110,12 +151,12 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
                     cls="scan-legend",
                 ),
                 P("Select a treatment tile to open its matching clinic comparison.", cls="scan-drill-note"),
-                Script(NotStr(json.dumps(signals, default=str, ensure_ascii=False).replace("</", "<\\/")), id="daily-scan-data", type="application/json"),
+                Script(NotStr(json.dumps(treemap_rows, default=str, ensure_ascii=False).replace("</", "<\\/")), id="daily-scan-data", type="application/json"),
                 cls="scan-panel",
             ),
             Section(
                 Div(
-                    Div(P("VERIFIABLE SIGNALS", cls="eyebrow"), H2(t("{count} cross-clinic comparisons", lang, count=len(signals)))),
+                    Div(P("OTHER EEA MARKETS", cls="eyebrow"), H2(t("{count} cross-clinic comparisons", lang, count=len(signals)))),
                     Span("LOWEST and HIGHEST always use different clinics", cls="scan-panel-note"),
                     cls="scan-panel-head",
                 ),

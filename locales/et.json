@@ -306,5 +306,10 @@
   "Loading daily treemap…": "Laadin päevaseire puukaarti…",
   "Select a treatment tile to open its matching clinic comparison.": "Vali raviteenuse paan, et avada vastav kliinikute võrdlus.",
   "Lower EUR price level": "Madalam EUR hinnatase",
-  "Higher EUR price level": "Kõrgem EUR hinnatase"
+  "Higher EUR price level": "Kõrgem EUR hinnatase",
+  "FEATURED COUNTRY": "ESILETÕSTETUD RIIK",
+  "Explore Lithuania on the dashboard →": "Vaata Leedut töölaual →",
+  "Ten sourced treatment prices from today’s featured clinic market.": "Kümme allikaga ravihinda tänaselt esiletõstetud kliinikuturult.",
+  "No featured prices are available yet.": "Esiletõstetud hindu pole veel saadaval.",
+  "OTHER EEA MARKETS": "TEISED EMP TURUD"
 }

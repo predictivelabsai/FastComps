@@ -26,9 +26,9 @@
   };
 
   const nodes = new Map();
-  const add = (id, label, parent, value, level, detail, signalIndex = null, text = '') => {
+  const add = (id, label, parent, value, level, detail, targetId = null, text = '') => {
     const node = nodes.get(id) || {
-      id, label, parent, value: 0, weightedLevel: 0, weight: 0, detail, signalIndex, text,
+      id, label, parent, value: 0, weightedLevel: 0, weight: 0, detail, targetId, text,
     };
     node.value += value;
     node.weightedLevel += level * value;
@@ -45,11 +45,15 @@
     const countryId = `country:${country}`;
     const typeId = `${countryId}:type:${type}`;
     const leafId = `${typeId}:treatment:${treatment}:${index}`;
-    const range = `${money(row.lowest_price)} – ${money(row.highest_price)}`;
+    const low = Number(row.lowest_price || 0);
+    const high = Number(row.highest_price || 0);
+    const range = low === high ? money(low) : `${money(low)} – ${money(high)}`;
     add(countryId, `${flag(country)} ${country}`, '', value, level, `${country} · ${value} clinic observations`);
     add(typeId, type, countryId, value, level, `${country} · ${type}`);
+    const clinics = row.lowest_clinic === row.highest_clinic
+      ? row.lowest_clinic : `${row.lowest_clinic} → ${row.highest_clinic}`;
     add(leafId, treatment, typeId, value, level,
-      `${range}<br>${row.lowest_clinic} → ${row.highest_clinic}`, index, range);
+      `${range}<br>${clinics}`, row.target_id, range);
   });
   const data = [...nodes.values()];
 
@@ -60,7 +64,7 @@
     parents: data.map(node => node.parent),
     values: data.map(node => node.value),
     branchvalues: 'total',
-    customdata: data.map(node => [node.detail, node.signalIndex]),
+    customdata: data.map(node => [node.detail, node.targetId]),
     text: data.map(node => node.text),
     texttemplate: '<b>%{label}</b><br>%{text}',
     marker: {
@@ -78,9 +82,9 @@
   }, { responsive: true, displayModeBar: false });
 
   host.on('plotly_click', event => {
-    const index = event.points?.[0]?.customdata?.[1];
-    if (index === null || index === undefined) return;
-    const card = document.getElementById(`scan-signal-${index}`);
+    const targetId = event.points?.[0]?.customdata?.[1];
+    if (!targetId) return;
+    const card = document.getElementById(targetId);
     if (!card) return;
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card.classList.remove('highlight');

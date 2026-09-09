@@ -67,6 +67,11 @@ def test_daily_scan_page_contract(monkeypatch, signed_in):
     monkeypatch.setattr(main.newsletter, "build_daily_scan", lambda: {
         "date": "2026-09-09", "hours": 36,
         "stats": {"observations": 10, "competitors": 2, "markets": 1, "sources": 2},
+        "featured_country": "LT",
+        "featured_prices": [{
+            "country_code": "LT", "treatment_type": "IV Therapy", "treatment": "Vitamin C infusion",
+            "competitor": "Featured Clinic", "price": 50, "source_url": "https://featured.example/prices",
+        }],
         "signals": [{
             "country_code": "LT", "treatment_type": "IV Therapy", "treatment": "Vitamin infusion therapy",
             "clinic_count": 2, "lowest_clinic": "Clinic A", "highest_clinic": "Clinic B",
@@ -78,6 +83,8 @@ def test_daily_scan_page_contract(monkeypatch, signed_in):
     assert response.status_code == 200
     assert "Daily evidence scan" in response.text
     assert "Clinic A" in response.text and "Clinic B" in response.text
+    assert "Featured Clinic" in response.text
+    assert "Explore Lithuania on the dashboard" in response.text
     assert 'id="daily-scan-treemap"' in response.text
     assert 'id="daily-scan-data"' in response.text
     assert 'type="application/json"' in response.text

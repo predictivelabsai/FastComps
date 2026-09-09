@@ -15,6 +15,15 @@
 .scan-panel-head { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 20px; justify-content: space-between; padding: 20px 22px; }
 .scan-panel-head h2 { font: 500 24px Georgia,serif; letter-spacing: -.02em; margin: 0; }
 .scan-panel-note { color: var(--muted); font-size: 11px; }
+.scan-cta { background: var(--green); border-radius: 8px; color: #fff; font-size: 11px; font-weight: 750; padding: 10px 14px; text-decoration: none; }
+.featured-intro { color: var(--muted); font-size: 12px; margin: 0; padding: 14px 20px 0; }
+.featured-price-grid { display: grid; gap: 9px; grid-template-columns: repeat(2,minmax(0,1fr)); padding: 14px 18px 18px; }
+.featured-price-card { border: 1px solid var(--line); border-radius: 10px; min-width: 0; padding: 13px; }
+.featured-price-card.highlight { animation: scan-highlight 1.6s ease; }
+.featured-price-head { align-items: center; display: flex; gap: 12px; justify-content: space-between; }
+.featured-price-head strong { flex: 0 0 auto; font-size: 14px; }
+.featured-price-card h2 { font: 500 17px/1.2 Georgia,serif; margin: 7px 0 6px; }
+.featured-source { color: var(--green); display: block; font-size: 10px; font-weight: 700; overflow: hidden; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .scan-treemap { height: 590px; padding: 12px; width: 100%; }
 .scan-legend { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 10px; justify-content: center; padding: 0 20px 14px; }
 .scan-gradient { background: linear-gradient(90deg,#2c9976,#efbf53,#ca5c49); border-radius: 999px; height: 7px; max-width: 260px; width: 34%; }
@@ -40,6 +49,7 @@
   .scan-hero h1 { font-size: 36px; }
   .scan-metrics { grid-template-columns: repeat(2,1fr); }
   .scan-panel-head { align-items: flex-start; flex-direction: column; }
+  .featured-price-grid { grid-template-columns: 1fr; padding: 12px; }
   .scan-grid { grid-template-columns: 1fr; padding: 12px; }
   .scan-treemap { height: 470px; padding: 6px; }
 }
