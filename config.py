@@ -12,3 +12,4 @@ XAI_API_KEY = os.getenv("XAI_API_KEY") or os.getenv("MARKET_LLM_API_KEY")
 XAI_BASE_URL = (os.getenv("XAI_BASE_URL") or os.getenv("MARKET_LLM_BASE_URL") or "https://api.x.ai/v1").rstrip("/")
 XAI_MODEL = os.getenv("GROK_MODEL") or os.getenv("MARKET_LLM_MODEL") or "grok-4-1-fast-non-reasoning"
 EXA_API_KEY = os.getenv("EXA_API_KEY")
+SESSION_SECRET = os.getenv("SESSION_SECRET", "")

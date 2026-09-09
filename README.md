@@ -6,7 +6,7 @@ FastComps is a dashboard-first application with a persistent evidence analyst. I
 
 ## Architecture
 
-- `web`: public read-only dashboard/API on port 5063.
+- `web`: Google-authenticated read-only dashboard/API on port 5063.
 - `worker`: independent lease-protected worker, currently synchronizing FastClinic every five minutes and able to process durable FastComps jobs.
 - `fast_clinic` schema: read-only source.
 - `fast_comps` schema: application-owned schema and `legacy_*` mirrors.
@@ -25,7 +25,7 @@ python migration.py
 uvicorn main:app --host 0.0.0.0 --port 5063
 ```
 
-Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic evidence summaries.
+Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic evidence summaries. Google sign-in uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and a strong, randomly generated `SESSION_SECRET`; startup fails if the session secret is absent.
 
 ## API
 
@@ -43,7 +43,7 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 - `POST /api/assistant`
 - `POST /api/assistant/stream` (SSE progress, governed analysis, inline visual data and citations)
 
-All endpoints are public and read-only in the initial release. Mutation routes are intentionally absent until access gating is enabled.
+The dashboard and API require a signed Google session; `/healthz`, static assets, and the authentication routes remain public. Mutation routes are intentionally absent.
 
 Conversational analytics never accepts or exposes SQL. The model can select only an allowlisted metric, dimension and bounded filters; FastComps compiles the PostgreSQL internally, runs it in a read-only transaction with a five-second statement timeout, and returns aggregate results with coverage and retained-source context.
 

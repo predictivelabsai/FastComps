@@ -12,6 +12,12 @@ services:
       XAI_API_KEY: ${XAI_API_KEY:-}
       XAI_BASE_URL: ${XAI_BASE_URL:-https://api.x.ai/v1}
       GROK_MODEL: ${GROK_MODEL:-grok-4-1-fast-non-reasoning}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-https://comps.fastsme.com/auth/google/callback}
+      GOOGLE_ALLOWED_DOMAINS: ${GOOGLE_ALLOWED_DOMAINS:-}
+      GOOGLE_ALLOWED_EMAILS: ${GOOGLE_ALLOWED_EMAILS:-}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
       PORT: 5063
     expose: ["5063"]
     healthcheck:

@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import re
+import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from html import escape
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.sessions import SessionMiddleware
 
+from auth import google_oidc
 from assistant import answer, stream_answer
-from config import APP_NAME, APP_VERSION
+from config import APP_NAME, APP_VERSION, PUBLIC_URL, SESSION_SECRET
 from db import SCHEMA, connection, init_db
 import repository
 
@@ -26,6 +31,32 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=APP_NAME, version=APP_VERSION, docs_url="/api/docs", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 _requests: dict[str, deque[float]] = defaultdict(deque)
+
+if not SESSION_SECRET:
+    raise RuntimeError("SESSION_SECRET is required")
+
+
+@app.middleware("http")
+async def require_sign_in(request: Request, call_next):
+    path = request.url.path
+    public = path in {"/health", "/healthz", "/auth/sign-in", "/auth/google", "/auth/google/callback"}
+    if public or path.startswith("/static/"):
+        return await call_next(request)
+    if request.session.get("user"):
+        return await call_next(request)
+    if path.startswith("/api/") or path == "/openapi.json":
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    return RedirectResponse(f"/auth/sign-in?next={quote(path, safe='/')}", status_code=303)
+
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET,
+    session_cookie="fastcomps_session",
+    max_age=60 * 60 * 24 * 7,
+    same_site="lax",
+    https_only=PUBLIC_URL.startswith("https://"),
+)
 
 
 def _country(value: str | None) -> str | None:
@@ -124,20 +155,57 @@ def api_assistant_stream(payload: AssistantRequest, request: Request):
 
 
 @app.get("/auth/sign-in",response_class=HTMLResponse)
-def sign_in():
-    return """<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Sign in · FastComps</title><link rel='stylesheet' href='/static/app.css'></head><body class='signin-body'><main class='signin-card'><a class='brand' href='/'><span>F</span>FastComps</a><p class='eyebrow'>PUBLIC PREVIEW</p><h1>No sign-in needed yet.</h1><p>The clinics workspace is currently available as a public preview. Google and email access controls are reserved for the gated release.</p><a class='primary-button' href='/'>Open workspace</a></main></body></html>"""
+def sign_in(request: Request, next: str = "/", error: str = ""):
+    if request.session.get("user"):
+        return RedirectResponse("/", status_code=303)
+    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
+    message = "<p class='auth-error'>Google sign-in failed. Please try again.</p>" if error else ""
+    return f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><meta name='robots' content='noindex'><title>Sign in · FastComps</title><link rel='icon' href='/static/favicon.svg'><link rel='stylesheet' href='/static/app.css'><link rel='stylesheet' href='/static/auth.css'></head><body class='signin-body'><main class='signin-card'><a class='brand' href='/'><span>F</span>FastComps</a><p class='eyebrow'>SECURE WORKSPACE</p><h1>Sign in to FastComps</h1><p>Continue with your Google account to access clinic competitive intelligence and source-backed analysis.</p>{message}<a class='google-button' href='/auth/google?next={escape(safe_next, quote=True)}'><span class='google-g'>G</span>Continue with Google</a><p class='signin-note'>FastComps requests only your basic profile and verified email.</p></main></body></html>"""
+
+
+@app.get("/auth/google")
+def google_start(request: Request, next: str = "/"):
+    if not google_oidc.enabled():
+        return RedirectResponse("/auth/sign-in?error=not_configured", status_code=303)
+    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
+    request.session.clear()
+    state = google_oidc.new_state()
+    request.session["google_oauth_state"] = state
+    request.session["post_auth_path"] = safe_next
+    return RedirectResponse(google_oidc.authorization_url(state), status_code=302)
 
 
 @app.get("/auth/google/callback",include_in_schema=False)
-def google_callback(): return RedirectResponse("/")
+def google_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    expected_state = request.session.pop("google_oauth_state", None)
+    if error or not code or not expected_state or not secrets.compare_digest(state, expected_state):
+        request.session.clear()
+        return RedirectResponse("/auth/sign-in?error=state", status_code=303)
+    identity = google_oidc.exchange_google_code(code)
+    if not identity:
+        request.session.clear()
+        return RedirectResponse("/auth/sign-in?error=account", status_code=303)
+    next_path = request.session.pop("post_auth_path", "/")
+    user_id = google_oidc.save_user(identity)
+    request.session.clear()
+    request.session["user"] = {"id": user_id, "email": identity["email"], "name": identity["name"]}
+    return RedirectResponse(next_path, status_code=303)
+
+
+@app.get("/auth/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/auth/sign-in", status_code=303)
 
 
 @app.get("/",response_class=HTMLResponse)
-def index(): return DASHBOARD_HTML
+def index(request: Request):
+    user = request.session["user"]
+    return DASHBOARD_HTML.replace("{{USER_EMAIL}}", escape(user["email"]))
 
 
-DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/market.css"></head><body>
-<header class="topbar"><a class="brand" href="/"><span>F</span>FastComps</a><nav><button data-view="overview" class="nav-button active">Overview</button><button data-view="competitors" class="nav-button">Competitors</button><button data-view="coverage" class="nav-button">Coverage</button><button data-view="evidence" class="nav-button">Evidence</button></nav><div class="header-actions"><label class="market-picker"><span>Market</span><select id="country"><option value="">All EEA</option></select></label><a class="sign-in" href="/auth/sign-in">Sign in</a></div></header>
+DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/market.css"><link rel="stylesheet" href="/static/auth.css"></head><body>
+<header class="topbar"><a class="brand" href="/"><span>F</span>FastComps</a><nav><button data-view="overview" class="nav-button active">Overview</button><button data-view="competitors" class="nav-button">Competitors</button><button data-view="coverage" class="nav-button">Coverage</button><button data-view="evidence" class="nav-button">Evidence</button></nav><div class="header-actions"><label class="market-picker"><span>Market</span><select id="country"><option value="">All EEA</option></select></label><span class="signed-in">{{USER_EMAIL}}</span><a class="sign-in" href="/auth/logout">Sign out</a></div></header>
 <main class="workspace"><section class="content"><div class="intro"><div><p class="eyebrow">CLINICS · COMPETITIVE INTELLIGENCE</p><h1>See the market as evidence, not noise.</h1><p>Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.</p></div><div class="sync-pill"><i></i><span id="sync-status">Connecting to evidence base…</span></div></div>
 <section class="metrics" id="metrics"><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article></section>
 <section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">MARKET SIGNAL</p><h2>Competitive footprint</h2></div><span class="panel-note">Verified locations only</span></div><div class="overview-grid"><div id="market-map" class="market-map"><div class="map-label">EEA clinic locations</div></div><div><h3>Category depth</h3><div id="categories" class="bar-list"></div></div></div></section>
