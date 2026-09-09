@@ -291,7 +291,7 @@ def _login_session(request: Request, user: dict) -> None:
     }
 
 
-@app.api_route("/auth/sign-in", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/auth/sign-in", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 async def sign_in(request: Request, next: str = "/", error: str = "", message: str = ""):
     if request.session.get("user"):
         return RedirectResponse(_safe_next(next), status_code=303)
@@ -310,7 +310,7 @@ async def sign_in(request: Request, next: str = "/", error: str = "", message: s
     return _html(access_page(access_card("signin", next_path=next_path, error=_sign_in_error(error), message=message), title="Sign in"))
 
 
-@app.api_route("/auth/sign-up", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/auth/sign-up", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 async def sign_up(request: Request, error: str = ""):
     if request.session.get("user"):
         return RedirectResponse("/", status_code=303)
@@ -340,7 +340,7 @@ async def sign_up(request: Request, error: str = ""):
     return _html(access_page(access_card("signup", error=error), title="Create account"))
 
 
-@app.api_route("/auth/forgot", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/auth/forgot", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 async def forgot_password(request: Request):
     if request.method == "POST":
         form = await request.form()
@@ -357,7 +357,7 @@ async def forgot_password(request: Request):
     return _html(access_page(forgot_card(), title="Forgot password"))
 
 
-@app.get("/auth/verify", response_class=HTMLResponse)
+@app.get("/auth/verify", response_class=HTMLResponse, include_in_schema=False)
 def verify_email(token: str = ""):
     user = accounts.verify_email_token(token) if token else None
     if not user:
@@ -372,7 +372,7 @@ def verify_email(token: str = ""):
     return RedirectResponse("/auth/sign-in?message=Email+verified.+You+can+sign+in+now.", status_code=303)
 
 
-@app.api_route("/auth/reset", methods=["GET", "POST"], response_class=HTMLResponse)
+@app.api_route("/auth/reset", methods=["GET", "POST"], response_class=HTMLResponse, include_in_schema=False)
 async def reset_password(request: Request, token: str = ""):
     if request.method == "POST":
         form = await request.form()
@@ -391,7 +391,7 @@ async def reset_password(request: Request, token: str = ""):
     return _html(access_page(reset_card(token=token), title="Reset password"))
 
 
-@app.get("/auth/google")
+@app.get("/auth/google", include_in_schema=False)
 def google_start(request: Request, next: str = "/"):
     if not google_oidc.enabled():
         return RedirectResponse("/auth/sign-in?error=not_configured", status_code=303)
@@ -419,13 +419,13 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
     return RedirectResponse(next_path, status_code=303)
 
 
-@app.get("/auth/logout")
+@app.get("/auth/logout", include_in_schema=False)
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/auth/sign-in", status_code=303)
 
 
-@app.get("/auth/unsubscribe", response_class=HTMLResponse)
+@app.get("/auth/unsubscribe", response_class=HTMLResponse, include_in_schema=False)
 def unsubscribe_daily_scan(token: str = ""):
     email = newsletter.unsubscribe(token) if token else None
     if email:
@@ -450,7 +450,7 @@ def _threads_for(user_id: str) -> list[dict]:
         return []
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index(request: Request, thread: str = ""):
     user = request.session.get("user")
     if not user:
@@ -460,13 +460,13 @@ def index(request: Request, thread: str = ""):
     return _html(chat_page(user, threads, messages, thread_id=thread))
 
 
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 def dashboard(request: Request):
     user = request.session["user"]
     return _html(dashboard_page(user, _threads_for(user["id"])))
 
 
-@app.get("/developers", response_class=HTMLResponse)
+@app.get("/developers", response_class=HTMLResponse, include_in_schema=False)
 def developers(request: Request):
     user = request.session.get("user")
     return _html(developer_page(user, _threads_for(user["id"]) if user else []))

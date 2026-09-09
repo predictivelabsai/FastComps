@@ -88,6 +88,9 @@ def test_developer_portal_and_schemas_are_public():
     assert client.get("/api/openapi.json").status_code == 200
     assert client.get("/api/openapi/v1.json").status_code == 200
     assert client.get("/swagger.json").status_code == 200
+    schema = client.get("/api/openapi.json").json()
+    assert "/auth/sign-in" not in schema["paths"]
+    assert "/developers" not in schema["paths"]
 
 
 def test_sign_in_offers_google():
