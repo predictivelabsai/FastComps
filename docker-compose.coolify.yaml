@@ -36,4 +36,8 @@ services:
       XAI_API_KEY: ${XAI_API_KEY:-}
       XAI_BASE_URL: ${XAI_BASE_URL:-https://api.x.ai/v1}
       GROK_MODEL: ${GROK_MODEL:-grok-4-1-fast-non-reasoning}
+    # The image's default health check probes the web server. This container is
+    # intentionally a non-HTTP worker, so container liveness is its health signal.
+    healthcheck:
+      disable: true
     restart: unless-stopped
