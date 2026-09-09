@@ -29,10 +29,10 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 
 ## Product surfaces
 
-- `/`: central streamed conversation workspace with persisted per-user chat history.
+- `/`: public product landing for anonymous visitors; central streamed conversation workspace with persisted history after sign-in.
 - `/dashboard`: market overview, competitor, coverage and evidence views; this is the only surface with the compact Evidence Analyst.
 - `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country/currency relative price colour.
-- `/developers`: developer guide, API resource catalogue, quick starts and links to Swagger, ReDoc and versioned OpenAPI documents.
+- `/developers`: public developer guide, API resource catalogue, quick starts and links to public Swagger, ReDoc and versioned OpenAPI contracts. Data calls remain authenticated.
 - `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
 
 ## Daily Clinic Market Scan
@@ -66,6 +66,17 @@ Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling t
 - `GET /api/threads` and `GET /api/threads/{thread_id}`
 
 The workspaces and API require a signed session. Users can authenticate with Google or a verified email/password account; `/healthz`, static assets, and the account access routes remain public. Market mutation routes are intentionally absent.
+
+## Product tour
+
+The landing-page animation is captured from the real signed-in FastHTML application. With local development dependencies installed, regenerate it with:
+
+```bash
+.venv/bin/python scripts/demo_walkthrough.py
+```
+
+The script starts a local server, captures the chat and key dashboard views into `output/playwright/`, and writes the optimised public asset to `static/product-demo.gif`.
+When the database URL lives in another ignored environment file, pass its path as `DEMO_ENV_FILE`.
 
 Conversational analytics never accepts or exposes SQL. The model can select only an allowlisted metric, dimension and bounded filters; FastComps compiles the PostgreSQL internally, runs it in a read-only transaction with a five-second statement timeout, and returns aggregate results with coverage and retained-source context.
 

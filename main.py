@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fasthtml.common import to_xml
 from pydantic import BaseModel, Field
@@ -24,6 +24,7 @@ from pages.access import access_card, access_page, forgot_card, notice_card, res
 from pages.chat import chat_page
 from pages.dashboard import dashboard_page
 from pages.developers import developer_page
+from pages.landing import landing_page
 import newsletter
 import repository
 
@@ -54,7 +55,11 @@ if not SESSION_SECRET:
 @app.middleware("http")
 async def require_sign_in(request: Request, call_next):
     path = request.url.path
-    if path in {"/health", "/healthz"} or path.startswith(("/static/", "/auth/")):
+    public_paths = {
+        "/", "/developers", "/health", "/healthz", "/robots.txt", "/sitemap.xml",
+        "/api/docs", "/api/redoc", "/api/openapi.json", "/api/openapi/v1.json", "/swagger.json",
+    }
+    if path in public_paths or path.startswith(("/static/", "/auth/")):
         return await call_next(request)
     if request.session.get("user"):
         return await call_next(request)
@@ -117,6 +122,23 @@ def healthz():
 
 @app.get("/health", include_in_schema=False)
 def health_alias(): return healthz()
+
+
+@app.get("/robots.txt", include_in_schema=False, response_class=PlainTextResponse)
+def robots():
+    return "User-agent: *\nAllow: /\nSitemap: https://comps.fastsme.com/sitemap.xml\n"
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap():
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://comps.fastsme.com/</loc></url>'
+        '<url><loc>https://comps.fastsme.com/developers</loc></url>'
+        '</urlset>'
+    )
+    return Response(xml, media_type="application/xml")
 
 
 @app.get("/api/overview")
@@ -430,7 +452,9 @@ def _threads_for(user_id: str) -> list[dict]:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, thread: str = ""):
-    user = request.session["user"]
+    user = request.session.get("user")
+    if not user:
+        return _html(landing_page())
     threads = _threads_for(user["id"])
     messages = repository.chat_messages(user["id"], thread) if thread else []
     return _html(chat_page(user, threads, messages, thread_id=thread))
@@ -444,5 +468,5 @@ def dashboard(request: Request):
 
 @app.get("/developers", response_class=HTMLResponse)
 def developers(request: Request):
-    user = request.session["user"]
-    return _html(developer_page(user, _threads_for(user["id"])))
+    user = request.session.get("user")
+    return _html(developer_page(user, _threads_for(user["id"]) if user else []))

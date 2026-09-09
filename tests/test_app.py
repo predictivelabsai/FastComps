@@ -69,6 +69,27 @@ def test_developer_portal_contract(signed_in):
     assert "Streaming event contract" in response.text
 
 
+def test_public_landing_contract():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "See the clinic market as evidence, not noise" in response.text
+    assert "/static/product-demo.gif" in response.text
+    assert 'href="/developers"' in response.text
+    assert 'href="/auth/sign-in"' in response.text
+    assert 'href="/auth/sign-up"' in response.text
+    assert "application/ld+json" in response.text
+
+
+def test_developer_portal_and_schemas_are_public():
+    response = client.get("/developers")
+    assert response.status_code == 200
+    assert "Build with source-backed clinic intelligence" in response.text
+    assert "FastComps" in response.text
+    assert client.get("/api/openapi.json").status_code == 200
+    assert client.get("/api/openapi/v1.json").status_code == 200
+    assert client.get("/swagger.json").status_code == 200
+
+
 def test_sign_in_offers_google():
     response = client.get("/auth/sign-in")
     assert response.status_code == 200
@@ -118,10 +139,18 @@ def test_forgot_password_is_non_enumerating(monkeypatch):
 
 def test_unauthenticated_workspace_and_api_are_gated():
     response = client.get("/", follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/auth/sign-in?next=/"
+    assert response.status_code == 200
     assert client.get("/api/overview").status_code == 401
     assert client.get("/static/auth.css").status_code == 200
+
+
+def test_public_discovery_files():
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert "Sitemap: https://comps.fastsme.com/sitemap.xml" in robots.text
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+    assert "https://comps.fastsme.com/developers" in sitemap.text
 
 
 def test_google_start_contract():

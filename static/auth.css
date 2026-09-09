@@ -42,3 +42,4 @@
 .auth-switch { font-size: 11px; margin: 20px 0 0; text-align: center; }
 .auth-success { background: #ecf8f2; border: 1px solid #bfe2d3; border-radius: 8px; color: var(--deep) !important; font-size: 12px; padding: 9px 11px; }
 .signin-card.htmx-swapping { opacity: .55; transition: opacity .16s ease; }
+@media (max-width: 480px) { .signin-card .brand { font-size: 19px; } }

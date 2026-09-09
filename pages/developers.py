@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fasthtml.common import A, Article, Aside, Code, Div, H1, H2, H3, Header, Main, Nav, P, Pre, Section, Strong
+from fasthtml.common import A, Article, Aside, Body, Code, Div, H1, H2, H3, Header, Html, Main, Nav, P, Pre, Section, Strong
 
 from components.shell import app_page, mobile_menu
+from pages.landing import public_footer, public_head, public_nav
 
 
 RESOURCES = (
@@ -19,7 +20,7 @@ RESOURCES = (
 )
 
 
-def developer_page(user: dict, threads: list[dict]):
+def developer_page(user: dict | None = None, threads: list[dict] | None = None):
     cards = Section(
         *(
             Article(H3(title), P(copy), Code(Strong(method), f" {path}"), cls="dev-card")
@@ -27,8 +28,9 @@ def developer_page(user: dict, threads: list[dict]):
         ),
         cls="dev-grid",
     )
+    header = Header(mobile_menu(), Strong("Developers"), cls="mobile-header") if user else None
     content = Main(
-        Header(mobile_menu(), Strong("Developers"), cls="mobile-header"),
+        header,
         Div(
             P("DEVELOPER PLATFORM · API V1", cls="eyebrow"),
             H1("Build with source-backed clinic intelligence."),
@@ -46,7 +48,7 @@ def developer_page(user: dict, threads: list[dict]):
             ),
             Aside(
                 Strong("Authentication. "),
-                "Browser clients use the secure FastComps session cookie. API responses return ",
+                "The documentation and OpenAPI contract are public. Data and conversation requests use the secure FastComps session cookie and return ",
                 Code("401"),
                 " outside an authenticated session. Dedicated scoped API keys can be added later without exposing the database.",
                 cls="dev-note",
@@ -70,9 +72,19 @@ def developer_page(user: dict, threads: list[dict]):
             ),
             cls="dev-wrap",
         ),
-        cls="shell-main dev-main",
+        cls="shell-main dev-main" if user else "dev-main dev-public",
     )
+    if not user:
+        return Html(
+            public_head(
+                "Developers · FastComps",
+                "FastComps API resources, OpenAPI contracts and streamed conversational-analysis event documentation.",
+                styles=("/static/developers.css",),
+            ),
+            Body(public_nav(), content, public_footer(), cls="landing-body"),
+            lang="en",
+        )
     return app_page(
-        "Developers", content, user=user, threads=threads, active="developers",
+        "Developers", content, user=user, threads=threads or [], active="developers",
         styles=("/static/developers.css",),
     )
