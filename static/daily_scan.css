@@ -25,6 +25,7 @@
 .featured-price-card h2 { font: 500 17px/1.2 Georgia,serif; margin: 7px 0 6px; }
 .featured-source { color: var(--green); display: block; font-size: 10px; font-weight: 700; overflow: hidden; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
 .scan-treemap { height: 590px; padding: 12px; width: 100%; }
+#daily-scan-treemap .treemaplayer .slice:first-child > .surface { fill: #fff !important; }
 .scan-legend { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 10px; justify-content: center; padding: 0 20px 14px; }
 .scan-gradient { background: linear-gradient(90deg,#2c9976,#efbf53,#ca5c49); border-radius: 999px; height: 7px; max-width: 260px; width: 34%; }
 .scan-drill-note { border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; margin: 0; padding: 12px 22px; }

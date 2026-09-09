@@ -2,7 +2,7 @@
 import os
 
 APP_NAME = "FastComps"
-APP_VERSION = "0.7.1"
+APP_VERSION = "0.7.2"
 PUBLIC_URL = os.getenv("PUBLIC_URL", "https://comps.fastsme.com").rstrip("/")
 PORT = int(os.getenv("PORT", "5063"))
 SYNC_INTERVAL_SECONDS = max(30, int(os.getenv("SYNC_INTERVAL_SECONDS", "300")))
