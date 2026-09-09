@@ -12,6 +12,8 @@ RESOURCES = (
     ("Market overview", "Read verified competitors, locations, observations and retained sources.", "GET", "/api/overview"),
     ("Treatment treemap", "Country → treatment type → treatment, sized by observations and coloured by relative price level.", "GET", "/api/treemap"),
     ("Competitors", "Search verified clinic competitors and their attributable footprint.", "GET", "/api/competitors"),
+    ("Competitor detail", "Drill into a provider’s locations, treatment prices and relative price levels.", "GET", "/api/competitors/{competitor_id}"),
+    ("Clinic locations", "Read geocoded, source-backed provider locations used by the market map.", "GET", "/api/locations"),
     ("Price observations", "Read captured treatments, prices, currencies and readable evidence links.", "GET", "/api/observations"),
     ("Coverage", "Inspect collection status and evidence depth across all 30 EEA markets.", "GET", "/api/coverage"),
     ("Evidence register", "Review retained public sources and freshness metadata.", "GET", "/api/evidence"),

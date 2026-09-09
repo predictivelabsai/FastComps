@@ -1,4 +1,5 @@
-const state = { country: '', view: 'overview' };
+const initialParams = new URLSearchParams(location.search);
+const state = { country: (initialParams.get('country') || '').toUpperCase(), view: 'overview' };
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -29,6 +30,14 @@ const readableUrl = (value, preferred = '') => {
     return `${url.hostname.replace(/^www\./, '')}${decodeURIComponent(url.pathname).replace(/\/$/, '')}`;
   } catch { return 'Source'; }
 };
+const flag = code => /^[A-Z]{2}$/.test(code || '')
+  ? String.fromCodePoint(...[...code].map(character => 127397 + character.charCodeAt()))
+  : '🌍';
+const updateUrl = () => {
+  const query = state.country ? `?country=${encodeURIComponent(state.country)}` : '';
+  const hash = state.view === 'overview' ? '' : `#${state.view}`;
+  history.replaceState(null, '', `/dashboard${query}${hash}`);
+};
 const price = observation => {
   if (observation.price_min == null) return 'Unavailable';
   const format = number => new Intl.NumberFormat('en', { maximumFractionDigits: 2 }).format(number);
@@ -37,8 +46,27 @@ const price = observation => {
 
 async function loadMarkets() {
   const rows = await get('/api/coverage');
-  $('#country').insertAdjacentHTML('beforeend', rows.map(row => `<option value="${row.country_code}">${esc(row.country_name)}</option>`).join(''));
+  $('#country').innerHTML = '<option value="">🌍 All EEA</option>' + rows.map(row => `<option value="${row.country_code}">${flag(row.country_code)} ${esc(row.country_name)}</option>`).join('');
+  $('#country').value = state.country;
+  renderCountryFilters(rows);
   renderCoverage(rows);
+}
+
+function renderCountryFilters(rows) {
+  const host = $('#country-filter-bar');
+  host.innerHTML = `<button type="button" data-country="" class="country-filter">🌍 All <small>${rows.reduce((sum, row) => sum + Number(row.verified || 0), 0)}</small></button>` + rows.map(row => `<button type="button" data-country="${row.country_code}" class="country-filter" title="${esc(row.country_name)}">${flag(row.country_code)} ${row.country_code}<small>${row.verified}</small></button>`).join('');
+  host.querySelectorAll('button').forEach(button => button.addEventListener('click', () => setCountry(button.dataset.country)));
+  updateCountryFilters();
+}
+function updateCountryFilters() {
+  $$('.country-filter').forEach(button => button.classList.toggle('active', button.dataset.country === state.country));
+}
+function setCountry(country, shouldRefresh = true) {
+  state.country = country || '';
+  $('#country').value = state.country;
+  updateCountryFilters();
+  updateUrl();
+  if (shouldRefresh) refresh();
 }
 
 async function loadOverview() {
@@ -57,11 +85,11 @@ async function loadOverview() {
 async function loadPrices(query = '') {
   const rows = await get('/api/observations', { country: state.country, q: query, limit: 100 });
   $('#prices').innerHTML = rows.length ? rows.map(observation => `<tr>
-    <td><strong>${esc(observation.competitor)}</strong></td>
+    <td><a class="row-link" href="/competitors/${encodeURIComponent(observation.competitor_id)}"><strong>${esc(observation.competitor)}</strong></a></td>
     <td>${esc(observation.offering)}<div class="subtext">${esc(observation.original_name || '')}</div></td>
     <td class="price">${price(observation)}</td>
     <td><span class="badge">${esc(observation.price_type)}</span></td>
-    <td>${esc(observation.country_code)}</td>
+    <td>${flag(observation.country_code)} ${esc(observation.country_code)}</td>
     <td><a class="source-link" href="${safeUrl(observation.source_url)}" target="_blank" rel="noopener noreferrer">${esc(readableUrl(observation.source_url, observation.source_label))} ↗</a><div class="subtext">${date(observation.retrieved_at)}</div></td>
   </tr>`).join('') : '<tr><td colspan="6" class="empty">No observations for this filter.</td></tr>';
 }
@@ -69,8 +97,8 @@ async function loadPrices(query = '') {
 async function loadCompetitors(query = '') {
   const rows = await get('/api/competitors', { country: state.country, q: query, limit: 150 });
   $('#competitors').innerHTML = rows.length ? rows.map(competitor => `<tr>
-    <td><strong>${esc(competitor.name)}</strong><div class="subtext">${esc(competitor.domain || '')}</div></td>
-    <td>${esc(competitor.country_code || '—')}</td><td>${competitor.locations}</td><td>${competitor.offerings}</td><td>${competitor.observations}</td><td>${date(competitor.last_observed_at)}</td>
+    <td><a class="row-link" href="/competitors/${encodeURIComponent(competitor.id)}"><strong>${esc(competitor.name)}</strong></a><div class="subtext">${esc(competitor.domain || '')}</div></td>
+    <td>${flag(competitor.country_code)} ${esc(competitor.country_code || '—')}</td><td>${competitor.locations}</td><td>${competitor.offerings}</td><td>${competitor.observations}</td><td>${date(competitor.last_observed_at)}</td>
   </tr>`).join('') : '<tr><td colspan="6" class="empty">No competitors for this filter.</td></tr>';
 }
 
@@ -83,8 +111,8 @@ async function loadTreemap() {
     return;
   }
   const nodes = new Map();
-  const add = (id, label, parent, value, priceLevel, detail) => {
-    const existing = nodes.get(id) || { id, label, parent, value: 0, weightedPrice: 0, weight: 0, detail };
+  const add = (id, label, parent, value, priceLevel, detail, country = '', treatment = '') => {
+    const existing = nodes.get(id) || { id, label, parent, value: 0, weightedPrice: 0, weight: 0, detail, country, treatment };
     existing.value += value;
     if (Number.isFinite(priceLevel)) {
       existing.weightedPrice += priceLevel * value;
@@ -98,9 +126,9 @@ async function loadTreemap() {
     const countryId = `country:${row.country_code}`;
     const typeId = `${countryId}:type:${row.treatment_type}`;
     const leafId = `${typeId}:treatment:${row.treatment}:${row.currency || ''}`;
-    add(countryId, row.country_code, '', count, level, 'Country');
-    add(typeId, row.treatment_type, countryId, count, level, 'Treatment type');
-    add(leafId, row.treatment, typeId, count, level, `${Number(row.median_price).toLocaleString('en', { maximumFractionDigits: 2 })} ${row.currency || ''} median · ${count} observations · ${row.sources} sources`);
+    add(countryId, `${flag(row.country_code)} ${row.country_code}`, '', count, level, 'Country', row.country_code);
+    add(typeId, row.treatment_type, countryId, count, level, 'Treatment type', row.country_code);
+    add(leafId, row.treatment, typeId, count, level, `${Number(row.median_price).toLocaleString('en', { maximumFractionDigits: 2 })} ${row.currency || ''} median · ${count} observations · ${row.sources} sources`, row.country_code, row.treatment);
   });
   const data = [...nodes.values()];
   await Plotly.react(host, [{
@@ -110,7 +138,7 @@ async function loadTreemap() {
     parents: data.map(node => node.parent),
     values: data.map(node => node.value),
     branchvalues: 'total',
-    customdata: data.map(node => node.detail),
+    customdata: data.map(node => [node.detail, node.country, node.treatment]),
     marker: {
       colors: data.map(node => node.weight ? node.weightedPrice / node.weight : .5),
       colorscale: [[0, '#2c9976'], [.5, '#efbf53'], [1, '#ca5c49']],
@@ -118,15 +146,58 @@ async function loadTreemap() {
       line: { color: '#ffffff', width: 2 },
     },
     textfont: { family: 'Inter, system-ui, sans-serif', size: 13 },
-    hovertemplate: '<b>%{label}</b><br>%{customdata}<br>Size: %{value}<extra></extra>',
+    hovertemplate: '<b>%{label}</b><br>%{customdata[0]}<br>Size: %{value}<extra></extra>',
     pathbar: { visible: true, edgeshape: '>' },
   }], {
     margin: { l: 8, r: 8, t: 36, b: 8 }, paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
   }, { responsive: true, displayModeBar: false });
+  if (host.removeAllListeners) host.removeAllListeners('plotly_click');
+  host.on('plotly_click', event => {
+    const point = event.points?.[0];
+    const country = point?.customdata?.[1];
+    const treatment = point?.customdata?.[2];
+    if (!country || !treatment) return;
+    setCountry(country, false);
+    $('#price-search').value = treatment;
+    loadPrices(treatment);
+    $('#treemap-drilldown').textContent = `${flag(country)} ${country} · price evidence for “${treatment}”`;
+    $('#prices').closest('.panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+let marketMap;
+let marketMarkers;
+function ensureMarketMap() {
+  if (marketMap || !window.L) return;
+  marketMap = L.map('market-map', { zoomControl: true }).setView([54.5, 15], 4);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(marketMap);
+  marketMarkers = L.featureGroup().addTo(marketMap);
+}
+async function loadMap() {
+  const rows = await get('/api/locations', { country: state.country });
+  ensureMarketMap();
+  if (!marketMap) return;
+  marketMarkers.clearLayers();
+  rows.forEach(item => {
+    const marker = L.circleMarker([Number(item.latitude), Number(item.longitude)], {
+      radius: 7, color: '#155b48', weight: 2, fillColor: '#35a77d', fillOpacity: .82,
+    });
+    const providerPath = `/competitors/${encodeURIComponent(item.competitor_id)}`;
+    marker.bindPopup(`<strong>${esc(item.competitor)}</strong><br>${esc([item.address, item.city].filter(Boolean).join(', '))}<br><span>${flag(item.country_code)} ${esc(item.country_code)}</span><br><a href="${providerPath}">View provider and prices →</a>`);
+    marker.addTo(marketMarkers);
+  });
+  if (rows.length) marketMap.fitBounds(marketMarkers.getBounds().pad(.08), { maxZoom: 13 });
+  else marketMap.setView([54.5, 15], 4);
+  $('#market-map-summary').textContent = rows.length
+    ? `${rows.length.toLocaleString()} geocoded clinic location${rows.length === 1 ? '' : 's'}${state.country ? ` in ${flag(state.country)} ${state.country}` : ' across the EEA'}`
+    : 'No geocoded clinic locations for this filter.';
 }
 
 function renderCoverage(rows) {
-  $('#coverage-grid').innerHTML = rows.map(row => `<article class="coverage-card"><div class="coverage-top"><span class="country-code">${row.country_code}</span><span class="status ${row.coverage_status}">${row.coverage_status.replace('_', ' ')}</span></div><div class="coverage-name">${esc(row.country_name)}</div><div class="progress"><i style="width:${row.progress_pct}%"></i></div><div class="coverage-meta"><span>${row.verified}/${row.target} verified</span><span>${row.candidates} candidates</span></div></article>`).join('');
+  $('#coverage-grid').innerHTML = rows.map(row => `<article class="coverage-card"><div class="coverage-top"><span class="country-code">${flag(row.country_code)} ${row.country_code}</span><span class="status ${row.coverage_status}">${row.coverage_status.replaceAll('_', ' ')}</span></div><div class="coverage-name">${esc(row.country_name)}</div><div class="progress"><i style="width:${row.progress_pct}%"></i></div><div class="coverage-meta"><span>${row.verified}/${row.target} verified</span><span>${row.candidates} candidates</span></div></article>`).join('');
 }
 async function loadCoverage() { renderCoverage(await get('/api/coverage')); }
 
@@ -153,22 +224,23 @@ async function loadRuns() {
 async function refresh() {
   await Promise.all([
     loadOverview(), loadPrices($('#price-search').value), loadCompetitors($('#competitor-search').value),
-    loadTreemap(), loadEvidence(), loadCandidates(), loadWatchlist(), loadRuns(),
+    loadTreemap(), loadMap(), loadEvidence(), loadCandidates(), loadWatchlist(), loadRuns(),
   ]);
   if (state.view === 'coverage') await loadCoverage();
 }
 
 function selectView(view, updateHash = true) {
-  state.view = ['overview', 'competitors', 'coverage', 'evidence'].includes(view) ? view : 'overview';
+  state.view = ['overview', 'competitors', 'map', 'coverage', 'evidence'].includes(view) ? view : 'overview';
   $$('.nav-button').forEach(button => button.classList.toggle('active', button.dataset.view === state.view));
   $$('.view-panel').forEach(panel => panel.classList.toggle('hidden', panel.dataset.panel !== state.view));
-  if (updateHash) history.replaceState(null, '', state.view === 'overview' ? '/dashboard' : `/dashboard#${state.view}`);
+  if (updateHash) updateUrl();
+  if (state.view === 'map') setTimeout(() => marketMap?.invalidateSize(), 0);
 }
 $$('.nav-button').forEach(button => button.addEventListener('click', () => selectView(button.dataset.view)));
 selectView(location.hash.slice(1) || 'overview', false);
 window.addEventListener('hashchange', () => selectView(location.hash.slice(1), false));
 
-$('#country').addEventListener('change', () => { state.country = $('#country').value; refresh(); });
+$('#country').addEventListener('change', () => setCountry($('#country').value));
 let priceTimer;
 let competitorTimer;
 $('#price-search').addEventListener('input', () => { clearTimeout(priceTimer); priceTimer = setTimeout(() => loadPrices($('#price-search').value), 250); });

@@ -57,6 +57,9 @@ def test_dashboard_contract(signed_in):
     assert "COLLECTION HISTORY" in response.text
     assert "Country → treatment type → treatment" in response.text
     assert "treatment-treemap" in response.text
+    assert "Market map" in response.text
+    assert "country-filter-bar" in response.text
+    assert "leaflet@1.9.4" in response.text
 
 
 def test_developer_portal_contract(signed_in):
@@ -194,6 +197,35 @@ def test_treemap_endpoint_delegates(monkeypatch, signed_in):
     monkeypatch.setattr(main.repository, "treatment_treemap", lambda country, limit: [{"country_code": country, "limit": limit}])
     response = signed_in.get("/api/treemap?country=lt&limit=42")
     assert response.json() == [{"country_code": "LT", "limit": 42}]
+
+
+def test_competitor_detail_page_and_api(monkeypatch, signed_in):
+    data = {
+        "competitor": {
+            "id": "clinic-1", "name": "Example Clinic", "country_code": "EE",
+            "website_url": "https://clinic.example", "description": "Evidence-backed clinic.",
+            "locations": 1, "offerings": 1, "observations": 1,
+        },
+        "locations": [{
+            "id": "location-1", "name": "Tallinn", "address": "Main 1", "city": "Tallinn",
+            "country_code": "EE", "postal_code": "10111", "phone": None,
+            "latitude": 59.44, "longitude": 24.75,
+            "source_url": "https://clinic.example/contact", "source_label": "clinic.example/contact",
+        }],
+        "prices": [{
+            "offering": "MRI scan", "original_name": "MRI scan", "treatment_type": "Diagnostics & imaging",
+            "price_min": 150.0, "price_max": None, "currency": "EUR", "price_level_label": "Mid-market",
+            "source_url": "https://clinic.example/prices", "source_label": "clinic.example/prices",
+        }],
+    }
+    monkeypatch.setattr(main.repository, "competitor_detail", lambda competitor_id: data if competitor_id == "clinic-1" else None)
+    page = signed_in.get("/competitors/clinic-1")
+    assert page.status_code == 200
+    assert "Treatment price drill-down" in page.text
+    assert "OpenStreetMap" in page.text
+    assert "Diagnostics &amp; imaging" in page.text
+    assert signed_in.get("/api/competitors/clinic-1").json()["competitor"]["name"] == "Example Clinic"
+    assert signed_in.get("/competitors/missing").status_code == 404
 
 
 def test_operational_read_endpoints(monkeypatch, signed_in):

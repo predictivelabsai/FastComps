@@ -22,6 +22,7 @@ from config import APP_NAME, APP_VERSION, PUBLIC_URL, SESSION_SECRET
 from db import SCHEMA, connection, init_db
 from pages.access import access_card, access_page, forgot_card, notice_card, reset_card
 from pages.chat import chat_page
+from pages.competitor import competitor_page
 from pages.dashboard import dashboard_page
 from pages.developers import developer_page
 from pages.landing import landing_page
@@ -152,6 +153,14 @@ def api_coverage(): return repository.coverage()
 @app.get("/api/competitors")
 def api_competitors(country: str | None = None, q: str | None = Query(default=None,max_length=100), limit: int = 100):
     return repository.competitors(_country(country),q,limit)
+
+
+@app.get("/api/competitors/{competitor_id}")
+def api_competitor(competitor_id: str):
+    result = repository.competitor_detail(competitor_id)
+    if not result:
+        raise HTTPException(404, "Competitor not found")
+    return result
 
 
 @app.get("/api/observations")
@@ -464,6 +473,15 @@ def index(request: Request, thread: str = ""):
 def dashboard(request: Request):
     user = request.session["user"]
     return _html(dashboard_page(user, _threads_for(user["id"])))
+
+
+@app.get("/competitors/{competitor_id}", response_class=HTMLResponse, include_in_schema=False)
+def competitor_detail(competitor_id: str, request: Request):
+    data = repository.competitor_detail(competitor_id)
+    if not data:
+        raise HTTPException(404, "Competitor not found")
+    user = request.session["user"]
+    return _html(competitor_page(user, _threads_for(user["id"]), data))
 
 
 @app.get("/developers", response_class=HTMLResponse, include_in_schema=False)

@@ -30,8 +30,9 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 ## Product surfaces
 
 - `/`: public product landing for anonymous visitors; central streamed conversation workspace with persisted history after sign-in.
-- `/dashboard`: market overview, competitor, coverage and evidence views; this is the only surface with the compact Evidence Analyst.
-- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country/currency relative price colour.
+- `/dashboard`: market overview, competitor, OpenStreetMap, coverage and evidence views; this is the only surface with the compact Evidence Analyst. Country flag filters are URL-addressable and shared across the dashboard.
+- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country/currency relative price colour. Selecting a treatment drills into its retained price evidence.
+- `/competitors/{competitor_id}`: provider footprint, clinic locations and published treatment prices with relative market-level bands and direct evidence links.
 - `/developers`: public developer guide, API resource catalogue, quick starts and links to public Swagger, ReDoc and versioned OpenAPI contracts. Data calls remain authenticated.
 - `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
 
@@ -53,6 +54,7 @@ Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling t
 - `GET /api/overview`
 - `GET /api/coverage`
 - `GET /api/competitors`
+- `GET /api/competitors/{competitor_id}`
 - `GET /api/observations`
 - `GET /api/locations`
 - `GET /api/categories`

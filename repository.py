@@ -12,6 +12,48 @@ from psycopg2.extras import Json
 from db import SCHEMA, connection, fetch_all, fetch_one
 
 
+TREATMENT_TYPE_RULES = (
+    ("Wellness & IV therapy", ("iv ", "infusion", "vitamin", "hydration", "longevity", "drip", "immune", "energy boost", "anti-stress", "recovery boost")),
+    ("Consultations", ("consult", "appointment", "examination", "visit", "second opinion", "check-up", "checkup", "on-call")),
+    ("Diagnostics & imaging", ("mri", "ct ", "x-ray", "xray", "ultrasound", "ecg", "diagnostic", "scan", "echo", "endoscop", "radiolog", "ecografie")),
+    ("Laboratory", ("blood", "laboratory", "panel", "triglycer", "ferritin", "glucose", "haemoglobin", "hemoglobin", "urine", "allergy test")),
+    ("Dental", ("dental", "dentist", "tooth", "teeth", "implant", "orthodont", "crown", "root canal")),
+    ("Dermatology & aesthetics", ("dermat", "skin", "filler", "botox", "laser", "aesthetic", "cosmetic", "beauty", "lipoma", "atheroma")),
+    ("Orthopaedics & spine", ("orthop", "joint", "knee", "hip", "spine", "scoliosis", "shoulder", "tendon", "femur", "ganglion", "bursa", "osteotom")),
+    ("Women's health", ("gynaec", "gynec", "uter", "ovary", "ovarian", "cervi", "pregnan", "maternity", "breast")),
+    ("Urology", ("urolog", "prostate", "bladder", "kidney", "renal", "vasectomy")),
+    ("Cardiology", ("cardi", "coronary", "heart", "vascular", "vein", "arter")),
+    ("Eye care", ("ophthalm", "cataract", "retina", "vision", "eye ", "eyelid")),
+    ("ENT", ("ent ", "ear ", "nose", "nasal", "sinus", "throat", "tonsil", "hearing")),
+    ("Rehabilitation", ("physio", "rehabil", "massage", "mobility", "occupational therapy")),
+    ("Mental health", ("psychi", "psycholog", "therapy session", "counselling", "counseling")),
+    ("Surgery & procedures", ("surgery", "surgical", "operation", "removal", "repair", "resection", "puncture", "injection", "biopsy", "ectomy", "plasty", "hernia", "suture")),
+)
+
+
+def treatment_type(name: str | None, mapped: str | None = None) -> str:
+    """Return the retained taxonomy label or a conservative broad display group."""
+    if mapped and mapped.strip().casefold() not in {"unmapped", "uncategorised", "uncategorized"}:
+        return mapped
+    normalized = f" {(name or '').casefold()} "
+    for label, needles in TREATMENT_TYPE_RULES:
+        if any(needle in normalized for needle in needles):
+            return label
+    return "Other treatments"
+
+
+def coverage_status(row: dict) -> str:
+    """Expose real campaign states; never manufacture a synthetic collecting state."""
+    if row["verified"] >= row["target"]:
+        return "covered"
+    campaign = str(row.get("campaign_status") or "not_started").strip().casefold().replace(" ", "_")
+    if campaign in {"queued", "running", "failed"}:
+        return campaign
+    if row["candidates"] or row["verified"]:
+        return "review_required"
+    return "not_started"
+
+
 def _clean(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)
@@ -93,14 +135,7 @@ def coverage() -> list[dict]:
         ORDER BY m.priority,m.country_name
     """)
     for row in rows:
-        if row["verified"] >= row["target"]:
-            row["coverage_status"] = "covered"
-        elif row["campaign_status"] in {"queued", "running"}:
-            row["coverage_status"] = "collecting"
-        elif row["candidates"] or row["verified"]:
-            row["coverage_status"] = "review_required"
-        else:
-            row["coverage_status"] = "not_started"
+        row["coverage_status"] = coverage_status(row)
         row["progress_pct"] = min(100, round(100 * row["verified"] / max(1, row["target"])))
     return clean_rows(rows)
 
@@ -160,8 +195,8 @@ def observations(country: str | None = None, competitor_id: str | None = None,
 def locations(country: str | None = None) -> list[dict]:
     params = {"country": country}
     extra = "AND l.country_code=%(country)s" if country else ""
-    return clean_rows(fetch_all(f"""SELECT l.id,l.name,c.name AS competitor,l.address,l.city,l.country_code,
-        l.latitude,l.longitude,l.geocode_status,l.source_url,l.evidence
+    return clean_rows(fetch_all(f"""SELECT l.id,l.name,c.id AS competitor_id,c.name AS competitor,l.address,l.city,l.country_code,
+        l.latitude,l.longitude,l.geocode_status,l.source_url,l.evidence,c.website_url
         FROM {SCHEMA}.competitor_locations l JOIN {SCHEMA}.competitors c ON c.id=l.competitor_id
         WHERE l.latitude IS NOT NULL AND l.longitude IS NOT NULL {extra} ORDER BY c.name,l.city""", params))
 
@@ -169,14 +204,24 @@ def locations(country: str | None = None) -> list[dict]:
 def categories(country: str | None = None) -> list[dict]:
     params = {"country": country}
     extra = "AND comp.country_code=%(country)s" if country else ""
-    return clean_rows(fetch_all(f"""SELECT COALESCE(cat.name,'Unmapped') AS category,
-        COUNT(DISTINCT f.id) AS offerings,COUNT(DISTINCT o.competitor_id) AS competitors,
-        COUNT(o.id) AS observations
+    rows = clean_rows(fetch_all(f"""SELECT f.id,f.name,cat.name AS mapped_type,
+        ARRAY_REMOVE(ARRAY_AGG(DISTINCT o.competitor_id),NULL) AS competitor_ids,COUNT(o.id) AS observations
         FROM {SCHEMA}.offerings f LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
         LEFT JOIN {SCHEMA}.observations o ON o.offering_id=f.id
         LEFT JOIN {SCHEMA}.competitors comp ON comp.id=o.competitor_id
-        WHERE f.vertical_id='clinics' {extra} GROUP BY COALESCE(cat.name,'Unmapped')
-        ORDER BY observations DESC,category LIMIT 30""", params))
+        WHERE f.vertical_id='clinics' {extra} GROUP BY f.id,f.name,cat.name""", params))
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        label = treatment_type(row.get("name"), row.get("mapped_type"))
+        item = grouped.setdefault(label, {"category": label, "offerings": 0, "competitor_ids": set(), "observations": 0})
+        item["offerings"] += 1
+        item["competitor_ids"].update(row.get("competitor_ids") or [])
+        item["observations"] += row["observations"]
+    result = []
+    for item in grouped.values():
+        competitor_ids = item.pop("competitor_ids")
+        result.append({**item, "competitors": len(competitor_ids)})
+    return sorted(result, key=lambda item: (-item["observations"], item["category"]))[:30]
 
 
 def evidence(country: str | None = None, limit: int = 30) -> list[dict]:
@@ -195,10 +240,9 @@ def evidence(country: str | None = None, limit: int = 30) -> list[dict]:
 def treatment_treemap(country: str | None = None, limit: int = 700) -> list[dict]:
     params = {"country": country, "limit": min(max(limit, 1), 1200)}
     extra = "AND c.country_code=%(country)s" if country else ""
-    return clean_rows(fetch_all(f"""
+    rows = clean_rows(fetch_all(f"""
         WITH leaves AS (
-          SELECT c.country_code,
-            COALESCE(cat.name,'Unmapped') AS treatment_type,
+          SELECT c.country_code,cat.name AS mapped_type,
             f.name AS treatment,o.currency,
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY o.price_min)::numeric AS median_price,
             COUNT(*)::int AS observations,COUNT(DISTINCT o.source_url)::int AS sources
@@ -207,7 +251,7 @@ def treatment_treemap(country: str | None = None, limit: int = 700) -> list[dict
           JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
           LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
           WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL {extra}
-          GROUP BY c.country_code,COALESCE(cat.name,'Unmapped'),f.name,o.currency
+          GROUP BY c.country_code,cat.name,f.name,o.currency
         ), ranked AS (
           SELECT *,CUME_DIST() OVER (
             PARTITION BY country_code,currency ORDER BY median_price
@@ -215,9 +259,50 @@ def treatment_treemap(country: str | None = None, limit: int = 700) -> list[dict
           FROM leaves
         )
         SELECT * FROM ranked
-        ORDER BY observations DESC,country_code,treatment_type,treatment
+        ORDER BY observations DESC,country_code,mapped_type NULLS LAST,treatment
         LIMIT %(limit)s
     """, params))
+    for row in rows:
+        row["treatment_type"] = treatment_type(row.get("treatment"), row.pop("mapped_type", None))
+    return rows
+
+
+def competitor_detail(competitor_id: str) -> dict | None:
+    competitor = fetch_one(f"""SELECT c.id,c.name,c.country_code,c.domain,c.website_url,c.description,c.status,
+        COUNT(DISTINCT l.id) AS locations,COUNT(DISTINCT co.offering_id) AS offerings,
+        COUNT(DISTINCT o.id) AS observations,MAX(o.retrieved_at) AS last_observed_at
+        FROM {SCHEMA}.competitors c
+        LEFT JOIN {SCHEMA}.competitor_locations l ON l.competitor_id=c.id
+        LEFT JOIN {SCHEMA}.competitor_offerings co ON co.competitor_id=c.id
+        LEFT JOIN {SCHEMA}.observations o ON o.competitor_id=c.id
+        WHERE c.id=%s AND c.vertical_id='clinics' GROUP BY c.id""", (competitor_id,))
+    if not competitor:
+        return None
+    location_rows = clean_rows(fetch_all(f"""SELECT id,name,address,city,country_code,postal_code,phone,
+        website_url,latitude,longitude,geocode_status,source_url,evidence,retrieved_at
+        FROM {SCHEMA}.competitor_locations WHERE competitor_id=%s ORDER BY city,address""", (competitor_id,)))
+    prices = clean_rows(fetch_all(f"""WITH market_prices AS (
+          SELECT o.id,o.competitor_id,f.name AS offering,o.original_name,o.price_min,o.price_max,
+            o.price_type,o.currency,o.source_url,o.evidence,o.retrieved_at,
+            c.country_code,cat.name AS mapped_type,
+            CUME_DIST() OVER (
+              PARTITION BY c.country_code,o.currency,COALESCE(cat.name,'') ORDER BY o.price_min
+            )::numeric AS price_level
+          FROM {SCHEMA}.observations o
+          JOIN {SCHEMA}.competitors c ON c.id=o.competitor_id
+          JOIN {SCHEMA}.offerings f ON f.id=o.offering_id
+          LEFT JOIN {SCHEMA}.categories cat ON cat.id=f.category_id
+          WHERE c.vertical_id='clinics' AND o.price_min IS NOT NULL
+        ) SELECT * FROM market_prices WHERE competitor_id=%s
+        ORDER BY offering,price_min,retrieved_at DESC""", (competitor_id,)))
+    for row in prices:
+        row["treatment_type"] = treatment_type(row.get("offering"), row.pop("mapped_type", None))
+        row["source_label"] = display_url(row.get("source_url"))
+        level = float(row.get("price_level") or 0.5)
+        row["price_level_label"] = "Lower" if level <= .33 else "Higher" if level >= .67 else "Mid-market"
+    for row in location_rows:
+        row["source_label"] = display_url(row.get("source_url"))
+    return {"competitor": {k: _clean(v) for k, v in competitor.items()}, "locations": location_rows, "prices": prices}
 
 
 def chat_threads(user_key: str, limit: int = 30) -> list[dict]:

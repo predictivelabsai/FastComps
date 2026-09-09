@@ -28,6 +28,7 @@ def dashboard_page(user: dict, threads: list[dict]):
         Nav(
             Button("Overview", data_view="overview", cls="nav-button active"),
             Button("Competitors", data_view="competitors", cls="nav-button"),
+            Button("Market map", data_view="map", cls="nav-button"),
             Button("Coverage", data_view="coverage", cls="nav-button"),
             Button("Evidence", data_view="evidence", cls="nav-button"),
         ),
@@ -45,6 +46,7 @@ def dashboard_page(user: dict, threads: list[dict]):
                 cls="panel-head",
             ),
             Div(P("Loading treatment treemap…", cls="empty"), id="treatment-treemap", cls="treatment-treemap"),
+            P("Select a treatment tile to drill into its matching price evidence.", id="treemap-drilldown", cls="treemap-drilldown"),
             Div(Span("Lower price level"), Span(cls="gradient"), Span("Higher price level"), P("Compared within each country and currency"), cls="treemap-legend"),
             cls="panel view-panel", data_panel="overview",
         ),
@@ -64,8 +66,20 @@ def dashboard_page(user: dict, threads: list[dict]):
             Input(id="competitor-search", cls="compact-input", placeholder="Search competitors"),
             cls="panel-head",
         ),
+        Div(id="country-filter-bar", cls="country-filter-bar", aria_label="Filter competitors by country"),
         _table(("Competitor", "Market", "Locations", "Offerings", "Evidence", "Last observed"), "competitors"),
         cls="panel view-panel hidden", data_panel="competitors",
+    )
+    market_map = Section(
+        Div(
+            _heading("CLINIC LOCATIONS", "Market map"),
+            Span("OpenStreetMap · select a marker for provider evidence", cls="panel-note"),
+            cls="panel-head",
+        ),
+        Div(id="market-map-summary", cls="market-map-summary"),
+        Div(id="market-map", cls="market-map", role="region", aria_label="Interactive competitor clinic map"),
+        P("Location records retain their original evidence URL. Map tiles © OpenStreetMap contributors.", cls="map-attribution-note"),
+        cls="panel view-panel hidden", data_panel="map",
     )
     coverage = Section(
         Div(_heading("30 EEA MARKETS", "Coverage status"), Span("Target: 10 verified competitors / market", cls="panel-note"), cls="panel-head"),
@@ -111,7 +125,7 @@ def dashboard_page(user: dict, threads: list[dict]):
                     cls="intro",
                 ),
                 Section(*(Div(cls="skeleton") for _ in range(4)), id="metrics", cls="metrics"),
-                *overview, competitors, coverage, evidence,
+                *overview, competitors, market_map, coverage, evidence,
                 cls="content",
             ),
             analyst,
@@ -121,6 +135,6 @@ def dashboard_page(user: dict, threads: list[dict]):
     )
     return app_page(
         "Dashboard", content, user=user, threads=threads, active="dashboard",
-        styles=("/static/market.css",),
-        scripts=("https://cdn.plot.ly/plotly-2.35.2.min.js", "/static/app.js"),
+        styles=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "/static/market.css"),
+        scripts=("https://unpkg.com/leaflet@1.9.4/dist/leaflet.js", "https://cdn.plot.ly/plotly-2.35.2.min.js", "/static/app.js"),
     )
