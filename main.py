@@ -87,6 +87,19 @@ def api_categories(country: str | None = None): return repository.categories(_co
 def api_evidence(country: str | None = None, limit: int = 30): return repository.evidence(_country(country),limit)
 
 
+@app.get("/api/candidates")
+def api_candidates(country: str | None = None, state: str | None = Query(default=None,max_length=30), limit: int = 100):
+    return repository.candidates(_country(country),state,limit)
+
+
+@app.get("/api/watchlist")
+def api_watchlist(country: str | None = None): return repository.watchlist(_country(country))
+
+
+@app.get("/api/runs")
+def api_runs(limit: int = 30): return repository.runs(limit)
+
+
 @app.post("/api/assistant")
 def api_assistant(payload: AssistantRequest, request: Request):
     ip = request.client.host if request.client else "unknown"; now = time.monotonic(); bucket = _requests[ip]
@@ -109,13 +122,13 @@ def google_callback(): return RedirectResponse("/")
 def index(): return DASHBOARD_HTML
 
 
-DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"></head><body>
+DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/market.css"></head><body>
 <header class="topbar"><a class="brand" href="/"><span>F</span>FastComps</a><nav><button data-view="overview" class="nav-button active">Overview</button><button data-view="competitors" class="nav-button">Competitors</button><button data-view="coverage" class="nav-button">Coverage</button><button data-view="evidence" class="nav-button">Evidence</button></nav><div class="header-actions"><label class="market-picker"><span>Market</span><select id="country"><option value="">All EEA</option></select></label><a class="sign-in" href="/auth/sign-in">Sign in</a></div></header>
 <main class="workspace"><section class="content"><div class="intro"><div><p class="eyebrow">CLINICS · COMPETITIVE INTELLIGENCE</p><h1>See the market as evidence, not noise.</h1><p>Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.</p></div><div class="sync-pill"><i></i><span id="sync-status">Connecting to evidence base…</span></div></div>
 <section class="metrics" id="metrics"><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article></section>
 <section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">MARKET SIGNAL</p><h2>Competitive footprint</h2></div><span class="panel-note">Verified locations only</span></div><div class="overview-grid"><div id="market-map" class="market-map"><div class="map-label">EEA clinic locations</div></div><div><h3>Category depth</h3><div id="categories" class="bar-list"></div></div></div></section>
 <section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">LATEST EVIDENCE</p><h2>Observed services & prices</h2></div><input id="price-search" class="compact-input" placeholder="Filter service or clinic"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Offering</th><th>Price</th><th>Type</th><th>Market</th><th>Evidence</th></tr></thead><tbody id="prices"></tbody></table></div></section>
 <section class="panel view-panel hidden" data-panel="competitors"><div class="panel-head"><div><p class="eyebrow">LANDSCAPE</p><h2>Competitors</h2></div><input id="competitor-search" class="compact-input" placeholder="Search competitors"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Market</th><th>Locations</th><th>Offerings</th><th>Evidence</th><th>Last observed</th></tr></thead><tbody id="competitors"></tbody></table></div></section>
-<section class="panel view-panel hidden" data-panel="coverage"><div class="panel-head"><div><p class="eyebrow">30 EEA MARKETS</p><h2>Coverage status</h2></div><span class="panel-note">Target: 10 verified competitors / market</span></div><div id="coverage-grid" class="coverage-grid"></div></section>
-<section class="panel view-panel hidden" data-panel="evidence"><div class="panel-head"><div><p class="eyebrow">SOURCE REGISTER</p><h2>Recent evidence</h2></div><span class="panel-note">Retained snapshots</span></div><div id="evidence-list" class="evidence-list"></div></section></section>
+<section class="panel view-panel hidden" data-panel="coverage"><div class="panel-head"><div><p class="eyebrow">30 EEA MARKETS</p><h2>Coverage status</h2></div><span class="panel-note">Target: 10 verified competitors / market</span></div><div id="coverage-grid" class="coverage-grid"></div><div class="subpanel-head"><div><p class="eyebrow">CURATED MONITORING</p><h2>Priority watchlist</h2></div></div><div id="watchlist-grid" class="watchlist-grid"></div><div class="subpanel-head"><div><p class="eyebrow">DISCOVERY PIPELINE</p><h2>Candidate queue</h2></div><span class="panel-note">Every lead retained for review</span></div><div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Market</th><th>State</th><th>Sources</th><th>Last seen</th></tr></thead><tbody id="candidates"></tbody></table></div></section>
+<section class="panel view-panel hidden" data-panel="evidence"><div class="panel-head"><div><p class="eyebrow">SOURCE REGISTER</p><h2>Recent evidence</h2></div><span class="panel-note">Retained snapshots</span></div><div id="evidence-list" class="evidence-list"></div><div class="subpanel-head"><div><p class="eyebrow">COLLECTION HISTORY</p><h2>Recent runs</h2></div></div><div class="table-wrap"><table><thead><tr><th>Run</th><th>Trigger</th><th>Status</th><th>Started</th><th>Result</th></tr></thead><tbody id="runs"></tbody></table></div></section></section>
 <aside class="assistant"><div class="assistant-head"><div class="assistant-mark">✦</div><div><p class="eyebrow">FASTCOMPS AI</p><h2>Evidence analyst</h2></div><span class="live-dot">LIVE</span></div><div id="assistant-feed" class="assistant-feed"><div class="assistant-message"><p>Ask about competitors, coverage, services or prices. I’ll answer from the current evidence base and show the sources.</p></div><div class="suggestions"><button>Which markets need attention?</button><button>Compare clinic pricing in Lithuania</button><button>Where is IV therapy observed?</button></div></div><form id="assistant-form" class="assistant-form"><textarea id="question" rows="2" maxlength="500" placeholder="Ask about this market…" required></textarea><button aria-label="Send question">↑</button></form><p class="assistant-foot">Read-only analysis · Sources stay visible</p></aside></main><script src="/static/app.js" defer></script></body></html>"""

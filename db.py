@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS fast_comps.markets (
  country_code CHAR(2) PRIMARY KEY, country_name TEXT NOT NULL, eea BOOLEAN NOT NULL DEFAULT TRUE,
  priority INTEGER NOT NULL DEFAULT 100, target_competitors INTEGER NOT NULL DEFAULT 10,
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.vertical_settings (
+ vertical_id TEXT PRIMARY KEY REFERENCES fast_comps.verticals(id), config JSONB NOT NULL DEFAULT '{}'::jsonb,
+ source_system TEXT NOT NULL, legacy_id TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS fast_comps.competitors (
  id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), name TEXT NOT NULL,
  country_code CHAR(2), domain TEXT, website_url TEXT, description TEXT, status TEXT NOT NULL DEFAULT 'verified',
@@ -159,6 +162,17 @@ CREATE INDEX IF NOT EXISTS collection_jobs_queue_idx ON fast_comps.collection_jo
 CREATE TABLE IF NOT EXISTS fast_comps.worker_leases (
  name TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.address_attempts (
+ competitor_id TEXT PRIMARY KEY REFERENCES fast_comps.competitors(id) ON DELETE CASCADE,
+ status TEXT, attempted_at TIMESTAMPTZ, error TEXT, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.geocode_cache (
+ id TEXT PRIMARY KEY, vertical_id TEXT NOT NULL REFERENCES fast_comps.verticals(id), payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+ checked_at TIMESTAMPTZ, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.geocode_gates (
+ name TEXT PRIMARY KEY, next_at TIMESTAMPTZ, source_system TEXT NOT NULL, legacy_id TEXT);
+CREATE TABLE IF NOT EXISTS fast_comps.provider_credentials (
+ owner_key TEXT NOT NULL, provider TEXT NOT NULL, encrypted_key TEXT NOT NULL, updated_at TIMESTAMPTZ,
+ source_system TEXT NOT NULL, legacy_id TEXT, PRIMARY KEY(owner_key,provider));
 CREATE TABLE IF NOT EXISTS fast_comps.sync_state (
  source_system TEXT PRIMARY KEY, last_started_at TIMESTAMPTZ, last_completed_at TIMESTAMPTZ,
  status TEXT NOT NULL DEFAULT 'never', table_counts JSONB NOT NULL DEFAULT '{}'::jsonb, error TEXT);
@@ -170,6 +184,16 @@ CREATE TABLE IF NOT EXISTS fast_comps.chat_messages (
  id BIGSERIAL PRIMARY KEY, thread_id UUID NOT NULL REFERENCES fast_comps.chat_threads(id) ON DELETE CASCADE,
  role TEXT NOT NULL CHECK (role IN ('user','assistant')), content TEXT NOT NULL,
  citations JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.users (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT UNIQUE NOT NULL, name TEXT,
+ role TEXT NOT NULL DEFAULT 'viewer', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.user_sessions (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES fast_comps.users(id) ON DELETE CASCADE,
+ token_hash TEXT UNIQUE NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE TABLE IF NOT EXISTS fast_comps.api_keys (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID REFERENCES fast_comps.users(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, last_used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 """
 
 

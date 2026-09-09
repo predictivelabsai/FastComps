@@ -97,6 +97,14 @@ def mirror_source_tables(cur) -> dict[str, int]:
 
 
 def project_generic_model(cur) -> None:
+    configs = _rows(cur, "market_config")
+    if configs:
+        latest = configs[-1]
+        cur.execute(f"""INSERT INTO {SCHEMA}.vertical_settings
+            (vertical_id,config,source_system,legacy_id,updated_at) VALUES ('clinics',%s,'fastclinic',%s,NOW())
+            ON CONFLICT (vertical_id) DO UPDATE SET config=EXCLUDED.config,legacy_id=EXCLUDED.legacy_id,updated_at=NOW()""",
+            (Json(_json(latest["payload"],{"raw":latest["payload"]})),str(latest["id"])))
+
     hospitals = _rows(cur, "market_hospital")
     _upsert(cur, "competitors",
         ("id","vertical_id","name","country_code","domain","website_url","description","status","source_system","legacy_table","legacy_id","first_seen_at"),
@@ -131,6 +139,21 @@ def project_generic_model(cur) -> None:
         ("id","competitor_id","name","address","city","country_code","postal_code","phone","website_url","latitude","longitude","geocode_status","geocode_source","evidence","source_url","retrieved_at","source_system","legacy_table","legacy_id"),
         [(_id(r["id"]),_id(r["hospital_id"]),r["name"],r["address"],r["city"],r["country"],r["postal_code"],r["phone"],r["website"],_decimal(r["latitude"]),_decimal(r["longitude"]),r["geocode_status"],r["geocode_source"],r["evidence"],r["source_url"],_ts(r["retrieved_at"]),"fastclinic","market_clinic",r["id"]) for r in clinics if _id(r["hospital_id"])],
         "id", ("name","address","city","country_code","postal_code","phone","website_url","latitude","longitude","geocode_status","geocode_source","evidence","source_url","retrieved_at"))
+
+    address_attempts = _rows(cur, "market_address_attempt")
+    _upsert(cur,"address_attempts",("competitor_id","status","attempted_at","error","source_system","legacy_id"),
+        [(_id(r["hospital_id"]),r["status"],_ts(r["attempted_at"]),r["error"],"fastclinic",r["hospital_id"])
+         for r in address_attempts if _id(r["hospital_id"]) in {_id(h["id"]) for h in hospitals}],
+        "competitor_id",("status","attempted_at","error"))
+
+    geocode_cache = _rows(cur,"market_geocode_cache")
+    _upsert(cur,"geocode_cache",("id","vertical_id","payload","checked_at","source_system","legacy_id"),
+        [(_id(r["id"]),"clinics",Json(_json(r["payload"],{"raw":r["payload"]})),_ts(r["checked_at"]),"fastclinic",r["id"])
+         for r in geocode_cache],"id",("payload","checked_at"))
+    geocode_gates = _rows(cur,"market_geocode_gate")
+    _upsert(cur,"geocode_gates",("name","next_at","source_system","legacy_id"),
+        [(f"fastclinic:{r['id']}",_ts(r["next_at"]),"fastclinic",str(r["id"])) for r in geocode_gates],
+        "name",("next_at",))
 
     sources = _rows(cur, "market_source")
     _upsert(cur, "sources",
@@ -190,6 +213,11 @@ def project_generic_model(cur) -> None:
             positioning=EXCLUDED.positioning,capabilities=EXCLUDED.capabilities,scope_score=EXCLUDED.scope_score,
             focus_score=EXCLUDED.focus_score,urls=EXCLUDED.urls,active=EXCLUDED.active,priority=EXCLUDED.priority""",
             (_id(r["id"]),hospital_domains.get(domain),r["name"],r["country"],r["segment"],Json(_json(r["cities"],[])),r["positioning"],Json(_json(r["capabilities"],[])),r["scope"],r["iv_focus"],Json(urls),bool(r["active"]),r["priority"],r["origin"],r["id"]))
+
+    credentials = _rows(cur,"search_provider_credentials")
+    _upsert(cur,"provider_credentials",("owner_key","provider","encrypted_key","updated_at","source_system","legacy_id"),
+        [(r["owner"],r["provider"],r["encrypted_key"],_ts(r["updated_at"]),"fastclinic",f"{r['owner']}:{r['provider']}") for r in credentials],
+        "owner_key,provider",("encrypted_key","updated_at"))
 
 
 def sync_fastclinic() -> dict[str, int]:

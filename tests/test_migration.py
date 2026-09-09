@@ -1,4 +1,4 @@
-from db import EEA_MARKETS
+from db import DDL,EEA_MARKETS
 from migration import SOURCE_TABLES,_decimal,_id,_json,_ts
 
 
@@ -13,6 +13,11 @@ def test_complete_market_subsystem_is_mirrored():
     assert "market_observation" in SOURCE_TABLES
     assert "market_address_attempt" in SOURCE_TABLES
     assert "search_provider_credentials" in SOURCE_TABLES
+
+
+def test_operational_tables_have_generic_destinations():
+    for table in ("vertical_settings","address_attempts","geocode_cache","geocode_gates","provider_credentials","users","user_sessions","api_keys"):
+        assert f"fast_comps.{table}" in DDL
 
 
 def test_source_ids_are_namespaced():

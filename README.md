@@ -37,6 +37,9 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 - `GET /api/locations`
 - `GET /api/categories`
 - `GET /api/evidence`
+- `GET /api/candidates`
+- `GET /api/watchlist`
+- `GET /api/runs`
 - `POST /api/assistant`
 
 All endpoints are public and read-only in the initial release. Mutation routes are intentionally absent until access gating is enabled.

@@ -168,6 +168,35 @@ def evidence(country: str | None = None, limit: int = 30) -> list[dict]:
         ) ss ON TRUE WHERE 1=1 {extra} ORDER BY s.retrieved_at DESC NULLS LAST LIMIT %(limit)s""", params))
 
 
+def candidates(country: str | None = None, state: str | None = None, limit: int = 100) -> list[dict]:
+    where = ["c.vertical_id='clinics'"]
+    params: dict[str, Any] = {"limit":min(max(limit,1),250)}
+    if country:
+        where.append("c.country_code=%(country)s"); params["country"] = country
+    if state:
+        where.append("c.state=%(state)s"); params["state"] = state
+    return clean_rows(fetch_all(f"""SELECT c.id,c.name,c.country_code,c.official_domain,c.source_url,c.source_type,
+        c.state,c.discovered_at,c.last_seen_at,COUNT(cs.id) AS source_count
+        FROM {SCHEMA}.candidates c LEFT JOIN {SCHEMA}.candidate_sources cs ON cs.candidate_id=c.id
+        WHERE {' AND '.join(where)} GROUP BY c.id ORDER BY c.last_seen_at DESC NULLS LAST,c.name LIMIT %(limit)s""",params))
+
+
+def watchlist(country: str | None = None) -> list[dict]:
+    params = {"country":country}; extra = "AND t.country_code=%(country)s" if country else ""
+    return clean_rows(fetch_all(f"""SELECT t.id,t.name,t.country_code,t.segment,t.cities,t.positioning,t.capabilities,
+        t.scope_score,t.focus_score,t.urls,t.active,t.priority,c.id AS competitor_id,
+        COUNT(DISTINCT o.id) AS observations,MAX(o.retrieved_at) AS last_observed_at
+        FROM {SCHEMA}.watchlist_targets t LEFT JOIN {SCHEMA}.competitors c ON c.id=t.competitor_id
+        LEFT JOIN {SCHEMA}.observations o ON o.competitor_id=c.id
+        WHERE t.active=TRUE {extra} GROUP BY t.id,c.id ORDER BY t.priority NULLS LAST,t.name""",params))
+
+
+def runs(limit: int = 30) -> list[dict]:
+    return clean_rows(fetch_all(f"""SELECT id,status,trigger_kind,actor,started_at,finished_at,stats,error,source_system
+        FROM {SCHEMA}.collection_runs ORDER BY started_at DESC NULLS LAST LIMIT %(limit)s""",
+        {"limit":min(max(limit,1),100)}))
+
+
 def assistant_context(question: str, country: str | None) -> dict:
     return {
         "question": question,
