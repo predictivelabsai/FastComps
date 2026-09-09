@@ -41,8 +41,11 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 - `GET /api/watchlist`
 - `GET /api/runs`
 - `POST /api/assistant`
+- `POST /api/assistant/stream` (SSE progress, governed analysis, inline visual data and citations)
 
 All endpoints are public and read-only in the initial release. Mutation routes are intentionally absent until access gating is enabled.
+
+Conversational analytics never accepts or exposes SQL. The model can select only an allowlisted metric, dimension and bounded filters; FastComps compiles the PostgreSQL internally, runs it in a read-only transaction with a five-second statement timeout, and returns aggregate results with coverage and retained-source context.
 
 ## Deployment
 

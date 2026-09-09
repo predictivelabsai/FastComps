@@ -45,6 +45,7 @@ def test_operational_read_endpoints(monkeypatch):
 
 
 def test_assistant_request(monkeypatch):
+    main._requests.clear()
     monkeypatch.setattr(main,"answer",lambda q,c: {"answer":q,"country":c,"citations":[]})
     response = client.post("/api/assistant",json={"question":"What changed?","country":"EE"})
     assert response.status_code == 200
@@ -53,3 +54,26 @@ def test_assistant_request(monkeypatch):
 
 def test_assistant_rejects_empty_question():
     assert client.post("/api/assistant",json={"question":""}).status_code == 422
+
+
+def test_assistant_stream_is_sse(monkeypatch):
+    main._requests.clear()
+    monkeypatch.setattr(
+        main,
+        "stream_answer",
+        lambda q, c: iter(
+            [
+                'event: token\ndata: {"token":"Safe result"}\n\n',
+                'event: done\ndata: {"mode":"analytics"}\n\n',
+            ]
+        ),
+    )
+    response = client.post(
+        "/api/assistant/stream",
+        json={"question": "Compare pricing", "country": "lt"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert "event: token" in response.text
+    assert "event: done" in response.text

@@ -42,9 +42,10 @@ def pool() -> ThreadedConnectionPool:
 
 
 @contextmanager
-def connection(*, dict_rows: bool = False):
+def connection(*, dict_rows: bool = False, read_only: bool = False):
     conn = pool().getconn()
     try:
+        conn.set_session(readonly=read_only, autocommit=False)
         with conn.cursor(cursor_factory=RealDictCursor if dict_rows else None) as cur:
             cur.execute(f'SET search_path TO "{SCHEMA}", public')
         yield conn
@@ -52,6 +53,8 @@ def connection(*, dict_rows: bool = False):
         conn.rollback()
         raise
     finally:
+        conn.rollback()
+        conn.set_session(readonly=False, autocommit=False)
         pool().putconn(conn)
 
 

@@ -7,11 +7,11 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from assistant import answer
+from assistant import answer, stream_answer
 from config import APP_NAME, APP_VERSION
 from db import SCHEMA, connection, init_db
 import repository
@@ -102,11 +102,25 @@ def api_runs(limit: int = 30): return repository.runs(limit)
 
 @app.post("/api/assistant")
 def api_assistant(payload: AssistantRequest, request: Request):
+    _rate_limit(request)
+    return answer(payload.question.strip(),_country(payload.country))
+
+
+def _rate_limit(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"; now = time.monotonic(); bucket = _requests[ip]
     while bucket and bucket[0] < now - 60: bucket.popleft()
     if len(bucket) >= 10: raise HTTPException(429,"Please wait before asking another question")
     bucket.append(now)
-    return answer(payload.question.strip(),_country(payload.country))
+
+
+@app.post("/api/assistant/stream")
+def api_assistant_stream(payload: AssistantRequest, request: Request):
+    _rate_limit(request)
+    return StreamingResponse(
+        stream_answer(payload.question.strip(), _country(payload.country)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/auth/sign-in",response_class=HTMLResponse)
@@ -131,4 +145,4 @@ DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><
 <section class="panel view-panel hidden" data-panel="competitors"><div class="panel-head"><div><p class="eyebrow">LANDSCAPE</p><h2>Competitors</h2></div><input id="competitor-search" class="compact-input" placeholder="Search competitors"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Market</th><th>Locations</th><th>Offerings</th><th>Evidence</th><th>Last observed</th></tr></thead><tbody id="competitors"></tbody></table></div></section>
 <section class="panel view-panel hidden" data-panel="coverage"><div class="panel-head"><div><p class="eyebrow">30 EEA MARKETS</p><h2>Coverage status</h2></div><span class="panel-note">Target: 10 verified competitors / market</span></div><div id="coverage-grid" class="coverage-grid"></div><div class="subpanel-head"><div><p class="eyebrow">CURATED MONITORING</p><h2>Priority watchlist</h2></div></div><div id="watchlist-grid" class="watchlist-grid"></div><div class="subpanel-head"><div><p class="eyebrow">DISCOVERY PIPELINE</p><h2>Candidate queue</h2></div><span class="panel-note">Every lead retained for review</span></div><div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Market</th><th>State</th><th>Sources</th><th>Last seen</th></tr></thead><tbody id="candidates"></tbody></table></div></section>
 <section class="panel view-panel hidden" data-panel="evidence"><div class="panel-head"><div><p class="eyebrow">SOURCE REGISTER</p><h2>Recent evidence</h2></div><span class="panel-note">Retained snapshots</span></div><div id="evidence-list" class="evidence-list"></div><div class="subpanel-head"><div><p class="eyebrow">COLLECTION HISTORY</p><h2>Recent runs</h2></div></div><div class="table-wrap"><table><thead><tr><th>Run</th><th>Trigger</th><th>Status</th><th>Started</th><th>Result</th></tr></thead><tbody id="runs"></tbody></table></div></section></section>
-<aside class="assistant"><div class="assistant-head"><div class="assistant-mark">✦</div><div><p class="eyebrow">FASTCOMPS AI</p><h2>Evidence analyst</h2></div><span class="live-dot">LIVE</span></div><div id="assistant-feed" class="assistant-feed"><div class="assistant-message"><p>Ask about competitors, coverage, services or prices. I’ll answer from the current evidence base and show the sources.</p></div><div class="suggestions"><button>Which markets need attention?</button><button>Compare clinic pricing in Lithuania</button><button>Where is IV therapy observed?</button></div></div><form id="assistant-form" class="assistant-form"><textarea id="question" rows="2" maxlength="500" placeholder="Ask about this market…" required></textarea><button aria-label="Send question">↑</button></form><p class="assistant-foot">Read-only analysis · Sources stay visible</p></aside></main><script src="/static/app.js" defer></script></body></html>"""
+<aside class="assistant"><div class="assistant-head"><div class="assistant-mark">✦</div><div><p class="eyebrow">FASTCOMPS AI</p><h2>Evidence analyst</h2></div><span class="live-dot">LIVE</span></div><div id="assistant-feed" class="assistant-feed" aria-live="polite"><div class="assistant-message"><p>Ask about competitors, coverage, services or prices. I’ll stream a governed analysis and keep its evidence visible.</p></div><div class="suggestions"><button>Which markets need attention?</button><button>Compare clinic pricing in Lithuania</button><button>Where is IV therapy observed?</button></div></div><form id="assistant-form" class="assistant-form"><textarea id="question" rows="2" maxlength="500" placeholder="Ask about this market…" required></textarea><button aria-label="Send question">↑</button></form><p class="assistant-foot">Read-only governed analytics · No SQL exposed</p></aside></main><script src="/static/app.js" defer></script></body></html>"""
