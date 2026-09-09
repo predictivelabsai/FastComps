@@ -67,6 +67,8 @@
     customdata: data.map(node => [node.detail, node.targetId]),
     text: data.map(node => node.text),
     texttemplate: '<b>%{label}</b><br>%{text}',
+    root: { color: '#ffffff' },
+    tiling: { pad: 3 },
     marker: {
       colors: data.map(node => node.weightedLevel / node.weight),
       colorscale: [[0, '#2c9976'], [.5, '#efbf53'], [1, '#ca5c49']],
@@ -75,10 +77,11 @@
     },
     textfont: { family: 'Inter, system-ui, sans-serif', size: 14 },
     hovertemplate: '<b>%{label}</b><br>%{customdata[0]}<br>Comparable clinics: %{value}<extra></extra>',
-    pathbar: { visible: true, edgeshape: '>' },
+    pathbar: { visible: true, edgeshape: '>', thickness: 24 },
   }], {
     margin: { l: 8, r: 8, t: 38, b: 8 },
     paper_bgcolor: '#ffffff', plot_bgcolor: '#ffffff',
+    uniformtext: { minsize: 10, mode: 'hide' },
   }, { responsive: true, displayModeBar: false });
 
   host.on('plotly_click', event => {
