@@ -25,6 +25,7 @@ from pages.access import access_card, access_page, forgot_card, notice_card, res
 from pages.chat import chat_page
 from pages.competitor import competitor_page
 from pages.dashboard import dashboard_page
+from pages.daily_scan import daily_scan_page
 from pages.developers import developer_page
 from pages.landing import landing_page
 from i18n import LANGUAGES, get_lang, localize_tree, safe_return_path, set_lang
@@ -510,6 +511,18 @@ def dashboard(request: Request):
     user = request.session["user"]
     lang = get_lang(request.session, request)
     return _html(dashboard_page(user, _threads_for(user["id"]), lang=lang), request=request, lang=lang)
+
+
+@app.get("/daily-scan", response_class=HTMLResponse, include_in_schema=False)
+def daily_scan(request: Request):
+    user = request.session["user"]
+    lang = get_lang(request.session, request)
+    scan = newsletter.build_daily_scan()
+    return _html(
+        daily_scan_page(user, _threads_for(user["id"]), scan, lang=lang),
+        request=request,
+        lang=lang,
+    )
 
 
 @app.get("/competitors/{competitor_id}", response_class=HTMLResponse, include_in_schema=False)

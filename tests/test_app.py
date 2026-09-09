@@ -60,6 +60,27 @@ def test_dashboard_contract(signed_in):
     assert "Market map" in response.text
     assert "country-filter-bar" in response.text
     assert "leaflet@1.9.4" in response.text
+    assert 'href="/daily-scan"' in response.text
+
+
+def test_daily_scan_page_contract(monkeypatch, signed_in):
+    monkeypatch.setattr(main.newsletter, "build_daily_scan", lambda: {
+        "date": "2026-09-09", "hours": 36,
+        "stats": {"observations": 10, "competitors": 2, "markets": 1, "sources": 2},
+        "signals": [{
+            "country_code": "LT", "treatment_type": "IV Therapy", "treatment": "Vitamin infusion therapy",
+            "clinic_count": 2, "lowest_clinic": "Clinic A", "highest_clinic": "Clinic B",
+            "lowest_price": 36, "highest_price": 70,
+            "lowest_source_url": "https://a.example/prices", "highest_source_url": "https://b.example/prices",
+        }],
+    })
+    response = signed_in.get("/daily-scan")
+    assert response.status_code == 200
+    assert "Daily evidence scan" in response.text
+    assert "Clinic A" in response.text and "Clinic B" in response.text
+    assert "data:image/png;base64," in response.text
+    assert 'href="/daily-scan" class="side-link active"' in response.text
+    assert "Evidence analyst" not in response.text
 
 
 def test_developer_portal_contract(signed_in):

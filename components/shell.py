@@ -76,6 +76,7 @@ def sidebar(user: dict, threads: list[dict], *, active: str, current_thread: str
             item("dashboard", "Dashboard", "/dashboard", "▦"),
             item("developers", "Developers", "/developers", "⌘"),
             P("Intelligence", cls="side-label"),
+            item("daily-scan", "Daily Scan", "/daily-scan", "◈"),
             A(Span("◎"), "Competitors", href="/dashboard#competitors", cls="side-link"),
             A(Span("◫"), "Coverage", href="/dashboard#coverage", cls="side-link"),
             A(Span("↗"), "Evidence", href="/dashboard#evidence", cls="side-link"),

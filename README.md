@@ -40,7 +40,7 @@ English, Estonian and Lithuanian are available from the flag selector on every p
 
 ## Daily Clinic Market Scan
 
-The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). Lithuania leads the digest, followed by priced treatment benchmarks showing the lowest and highest publishing clinics with direct evidence links. A six-hour ingester persists the ECB daily reference table and all displayed prices are converted to EUR; original currency amounts remain retained for audit. Unpriced records remain retained for future scans but are excluded from the email, as is operational coverage-queue reporting. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
+The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). Lithuania leads the digest, followed by comparable treatment benchmarks that are admitted only when at least two distinct clinics publish prices; LOWEST and HIGHEST can never repeat the same clinic. Country breadth is selected before additional comparisons from the same market, and every clinic endpoint links directly to its evidence. Each message embeds a server-rendered PNG of the country → treatment type → treatment comparison map, plus an email-safe text fallback. A six-hour ingester persists the ECB daily reference table and all displayed prices are converted to EUR; original currency amounts remain retained for audit. Unpriced and single-clinic records remain retained for future scans but are excluded from the email, as is operational coverage-queue reporting. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
 
 ```bash
 python -m scripts.daily_scan --dry-run

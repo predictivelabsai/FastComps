@@ -3,6 +3,7 @@ python-fasthtml==0.14.2
 uvicorn[standard]==0.49.0
 psycopg2-binary==2.9.10
 httpx==0.28.1
+Pillow==12.3.0
 itsdangerous==2.2.0
 bcrypt==4.3.0
 python-multipart==0.0.32
