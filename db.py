@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from contextlib import contextmanager
 
 import psycopg2
@@ -26,6 +27,9 @@ DB_URL = os.getenv("DB_URL") or os.getenv("DATABASE_URL_PROD")
 SCHEMA = _schema_env("DB_SCHEMA", "fast_comps")
 SOURCE_SCHEMA = _schema_env("SOURCE_DB_SCHEMA", "fast_clinic")
 _pool: ThreadedConnectionPool | None = None
+_pool_max = max(1, int(os.getenv("DB_POOL_MAX", "16")))
+_pool_slots = threading.BoundedSemaphore(_pool_max)
+_pool_init_lock = threading.Lock()
 
 
 def database_url() -> str:
@@ -37,25 +41,40 @@ def database_url() -> str:
 def pool() -> ThreadedConnectionPool:
     global _pool
     if _pool is None:
-        _pool = ThreadedConnectionPool(1, int(os.getenv("DB_POOL_MAX", "8")), database_url())
+        with _pool_init_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(1, _pool_max, database_url())
     return _pool
 
 
 @contextmanager
 def connection(*, dict_rows: bool = False, read_only: bool = False):
-    conn = pool().getconn()
+    if not _pool_slots.acquire(timeout=float(os.getenv("DB_POOL_WAIT_SECONDS", "30"))):
+        raise RuntimeError("Database connection pool wait timed out")
+    conn = None
     try:
+        conn = pool().getconn()
         conn.set_session(readonly=read_only, autocommit=False)
         with conn.cursor(cursor_factory=RealDictCursor if dict_rows else None) as cur:
             cur.execute(f'SET search_path TO "{SCHEMA}", public')
         yield conn
     except Exception:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
         raise
     finally:
-        conn.rollback()
-        conn.set_session(readonly=False, autocommit=False)
-        pool().putconn(conn)
+        try:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                    conn.set_session(readonly=False, autocommit=False)
+                except Exception:
+                    pool().putconn(conn, close=True)
+                    raise
+                else:
+                    pool().putconn(conn)
+        finally:
+            _pool_slots.release()
 
 
 DDL = r"""
