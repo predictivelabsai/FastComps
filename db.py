@@ -208,7 +208,26 @@ CREATE TABLE IF NOT EXISTS fast_comps.chat_messages (
  citations JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
 CREATE TABLE IF NOT EXISTS fast_comps.users (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email TEXT UNIQUE NOT NULL, name TEXT,
- role TEXT NOT NULL DEFAULT 'viewer', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ role TEXT NOT NULL DEFAULT 'viewer', password_hash TEXT, google_sub TEXT UNIQUE,
+ email_verified BOOLEAN NOT NULL DEFAULT FALSE, daily_scan_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ALTER TABLE fast_comps.users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE fast_comps.users ADD COLUMN IF NOT EXISTS google_sub TEXT;
+ALTER TABLE fast_comps.users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE fast_comps.users ADD COLUMN IF NOT EXISTS daily_scan_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE fast_comps.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub_idx ON fast_comps.users(google_sub) WHERE google_sub IS NOT NULL;
+CREATE TABLE IF NOT EXISTS fast_comps.account_tokens (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES fast_comps.users(id) ON DELETE CASCADE,
+ purpose TEXT NOT NULL CHECK (purpose IN ('verify_email','reset_password')),
+ token_hash TEXT UNIQUE NOT NULL, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX IF NOT EXISTS account_tokens_lookup_idx ON fast_comps.account_tokens(token_hash,purpose);
+CREATE TABLE IF NOT EXISTS fast_comps.newsletter_deliveries (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(), scan_date DATE NOT NULL, email TEXT NOT NULL,
+ status TEXT NOT NULL CHECK (status IN ('sent','failed')), message_id TEXT, error TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(scan_date,email));
 CREATE TABLE IF NOT EXISTS fast_comps.user_sessions (
  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES fast_comps.users(id) ON DELETE CASCADE,
  token_hash TEXT UNIQUE NOT NULL, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());

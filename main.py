@@ -1,24 +1,30 @@
-"""FastComps public dashboard and read-only API."""
+"""FastComps chat-first clinic competitive-intelligence application."""
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from html import escape
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fasthtml.common import to_xml
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from auth import google_oidc
+from auth import accounts, google_oidc
 from assistant import answer, stream_answer
 from config import APP_NAME, APP_VERSION, PUBLIC_URL, SESSION_SECRET
 from db import SCHEMA, connection, init_db
+from pages.access import access_card, access_page, forgot_card, notice_card, reset_card
+from pages.chat import chat_page
+from pages.dashboard import dashboard_page
+from pages.developers import developer_page
+import newsletter
 import repository
 
 
@@ -28,7 +34,16 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=APP_NAME, version=APP_VERSION, docs_url="/api/docs", lifespan=lifespan)
+app = FastAPI(
+    title=APP_NAME,
+    description="Source-backed clinic competitive intelligence across all 30 EEA markets.",
+    version=APP_VERSION,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    servers=[{"url": PUBLIC_URL, "description": "Production"}],
+    lifespan=lifespan,
+)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 _requests: dict[str, deque[float]] = defaultdict(deque)
 
@@ -39,8 +54,7 @@ if not SESSION_SECRET:
 @app.middleware("http")
 async def require_sign_in(request: Request, call_next):
     path = request.url.path
-    public = path in {"/health", "/healthz", "/auth/sign-in", "/auth/google", "/auth/google/callback"}
-    if public or path.startswith("/static/"):
+    if path in {"/health", "/healthz"} or path.startswith(("/static/", "/auth/")):
         return await call_next(request)
     if request.session.get("user"):
         return await call_next(request)
@@ -68,9 +82,27 @@ def _country(value: str | None) -> str | None:
     return value
 
 
+def _html(component, *, status_code: int = 200, headers: dict[str, str] | None = None) -> HTMLResponse:
+    return HTMLResponse(to_xml(component), status_code=status_code, headers=headers)
+
+
+def _access_response(request: Request, card, *, title: str) -> HTMLResponse:
+    if request.headers.get("HX-Request") == "true":
+        return _html(card)
+    return _html(access_page(card, title=title))
+
+
+def _redirect(request: Request, path: str) -> HTMLResponse | RedirectResponse:
+    if request.headers.get("HX-Request") == "true":
+        return HTMLResponse("", headers={"HX-Redirect": path})
+    return RedirectResponse(path, status_code=303)
+
+
 class AssistantRequest(BaseModel):
     question: str = Field(min_length=2, max_length=500)
     country: str | None = Field(default=None, max_length=2)
+    workspace: str = Field(default="dashboard", pattern="^(dashboard|chat)$")
+    thread_id: str | None = None
 
 
 @app.get("/healthz")
@@ -114,6 +146,11 @@ def api_locations(country: str | None = None): return repository.locations(_coun
 def api_categories(country: str | None = None): return repository.categories(_country(country))
 
 
+@app.get("/api/treemap", tags=["market intelligence"])
+def api_treemap(country: str | None = None, limit: int = 700):
+    return repository.treatment_treemap(_country(country), limit)
+
+
 @app.get("/api/evidence")
 def api_evidence(country: str | None = None, limit: int = 30): return repository.evidence(_country(country),limit)
 
@@ -129,6 +166,16 @@ def api_watchlist(country: str | None = None): return repository.watchlist(_coun
 
 @app.get("/api/runs")
 def api_runs(limit: int = 30): return repository.runs(limit)
+
+
+@app.get("/api/threads", tags=["conversations"])
+def api_threads(request: Request, limit: int = 30):
+    return repository.chat_threads(request.session["user"]["id"], limit)
+
+
+@app.get("/api/threads/{thread_id}", tags=["conversations"])
+def api_thread(thread_id: str, request: Request):
+    return repository.chat_messages(request.session["user"]["id"], thread_id)
 
 
 @app.post("/api/assistant")
@@ -147,27 +194,186 @@ def _rate_limit(request: Request) -> None:
 @app.post("/api/assistant/stream")
 def api_assistant_stream(payload: AssistantRequest, request: Request):
     _rate_limit(request)
+    question = payload.question.strip()
+    country = _country(payload.country)
+    if payload.workspace == "chat":
+        user_key = request.session["user"]["id"]
+        thread_id = payload.thread_id or repository.create_chat_thread(user_key, question[:80])
+        if not repository.add_chat_message(user_key, thread_id, "user", question):
+            raise HTTPException(404, "Conversation not found")
+        source = _persisted_stream(user_key, thread_id, question, country)
+    else:
+        source = stream_answer(question, country)
     return StreamingResponse(
-        stream_answer(payload.question.strip(), _country(payload.country)),
+        source,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
 
 
-@app.get("/auth/sign-in",response_class=HTMLResponse)
-def sign_in(request: Request, next: str = "/", error: str = ""):
+def _persisted_stream(user_key: str, thread_id: str, question: str, country: str | None):
+    yield f"event: thread\ndata: {json.dumps({'thread_id': thread_id})}\n\n"
+    answer_text = ""
+    citations: list[dict] = []
+    for chunk in stream_answer(question, country):
+        event_name = "message"
+        data: dict = {}
+        for line in chunk.splitlines():
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+            elif line.startswith("data:"):
+                try:
+                    data = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    data = {}
+        if event_name == "token":
+            answer_text += data.get("token", "")
+        elif event_name == "citations":
+            citations = data.get("items", [])
+        yield chunk
+    if answer_text.strip():
+        repository.add_chat_message(user_key, thread_id, "assistant", answer_text.strip(), citations)
+
+
+@app.get("/api/openapi/v1.json", include_in_schema=False)
+def openapi_v1():
+    return JSONResponse(app.openapi())
+
+
+@app.get("/swagger.json", include_in_schema=False)
+def swagger_compatibility():
+    return JSONResponse(app.openapi())
+
+
+def _safe_next(value: str) -> str:
+    return value if value.startswith("/") and not value.startswith("//") else "/"
+
+
+def _sign_in_error(value: str) -> str:
+    return {
+        "invalid": "Email or password is incorrect.",
+        "unverified": "Verify your email before signing in.",
+        "state": "Google sign-in expired. Please try again.",
+        "account": "Google could not verify this account.",
+        "not_configured": "Google sign-in is temporarily unavailable.",
+    }.get(value, value)
+
+
+def _login_session(request: Request, user: dict) -> None:
+    request.session.clear()
+    request.session["user"] = {
+        "id": str(user["id"]),
+        "email": user["email"],
+        "name": user.get("name") or user["email"],
+        "role": user.get("role", "viewer"),
+    }
+
+
+@app.api_route("/auth/sign-in", methods=["GET", "POST"], response_class=HTMLResponse)
+async def sign_in(request: Request, next: str = "/", error: str = "", message: str = ""):
+    if request.session.get("user"):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    next_path = _safe_next(next)
+    if request.method == "POST":
+        form = await request.form()
+        user, reason = accounts.authenticate(str(form.get("email") or ""), str(form.get("password") or ""))
+        if not user:
+            return _access_response(
+                request,
+                access_card("signin", next_path=next_path, error=_sign_in_error(reason or "invalid")),
+                title="Sign in",
+            )
+        _login_session(request, user)
+        return _redirect(request, next_path)
+    return _html(access_page(access_card("signin", next_path=next_path, error=_sign_in_error(error), message=message), title="Sign in"))
+
+
+@app.api_route("/auth/sign-up", methods=["GET", "POST"], response_class=HTMLResponse)
+async def sign_up(request: Request, error: str = ""):
     if request.session.get("user"):
         return RedirectResponse("/", status_code=303)
-    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
-    message = "<p class='auth-error'>Google sign-in failed. Please try again.</p>" if error else ""
-    return f"""<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'><meta name='robots' content='noindex'><title>Sign in · FastComps</title><link rel='icon' href='/static/favicon.svg'><link rel='stylesheet' href='/static/app.css'><link rel='stylesheet' href='/static/auth.css'></head><body class='signin-body'><main class='signin-card'><a class='brand' href='/'><span>F</span>FastComps</a><p class='eyebrow'>SECURE WORKSPACE</p><h1>Sign in to FastComps</h1><p>Continue with your Google account to access clinic competitive intelligence and source-backed analysis.</p>{message}<a class='google-button' href='/auth/google?next={escape(safe_next, quote=True)}'><span class='google-g'>G</span>Continue with Google</a><p class='signin-note'>FastComps requests only your basic profile and verified email.</p></main></body></html>"""
+    if request.method == "POST":
+        form = await request.form()
+        email = accounts.normalize_email(str(form.get("email") or ""))
+        password = str(form.get("password") or "")
+        name = str(form.get("name") or "")
+        if not accounts.valid_email(email):
+            return _access_response(request, access_card("signup", error="Enter a valid email address."), title="Create account")
+        if len(password) < 8:
+            return _access_response(request, access_card("signup", error="Password must be at least 8 characters."), title="Create account")
+        user = accounts.create_user(email, password, name)
+        if not user:
+            return _access_response(request, access_card("signup", error="An account with this email already exists."), title="Create account")
+        token = accounts.create_token(str(user["id"]), "verify_email", lifetime_minutes=24 * 60)
+        accounts.send_account_email(email, purpose="verify_email", token=token)
+        return _access_response(
+            request,
+            notice_card(
+                "Check your email",
+                "We sent a verification link to finish creating your FastComps account.",
+                action="/auth/sign-in", action_label="Back to sign in",
+            ),
+            title="Check your email",
+        )
+    return _html(access_page(access_card("signup", error=error), title="Create account"))
+
+
+@app.api_route("/auth/forgot", methods=["GET", "POST"], response_class=HTMLResponse)
+async def forgot_password(request: Request):
+    if request.method == "POST":
+        form = await request.form()
+        email = accounts.normalize_email(str(form.get("email") or ""))
+        user = accounts.user_for_email(email) if accounts.valid_email(email) else None
+        if user:
+            token = accounts.create_token(str(user["id"]), "reset_password", lifetime_minutes=60)
+            accounts.send_account_email(email, purpose="reset_password", token=token)
+        return _access_response(
+            request,
+            forgot_card(message="If that email is registered, a reset link is on its way."),
+            title="Forgot password",
+        )
+    return _html(access_page(forgot_card(), title="Forgot password"))
+
+
+@app.get("/auth/verify", response_class=HTMLResponse)
+def verify_email(token: str = ""):
+    user = accounts.verify_email_token(token) if token else None
+    if not user:
+        return _html(access_page(
+            notice_card(
+                "Link expired",
+                "This verification link is invalid or has expired. Create the account again to receive a new one.",
+                action="/auth/sign-up", action_label="Create account",
+            ),
+            title="Link expired",
+        ))
+    return RedirectResponse("/auth/sign-in?message=Email+verified.+You+can+sign+in+now.", status_code=303)
+
+
+@app.api_route("/auth/reset", methods=["GET", "POST"], response_class=HTMLResponse)
+async def reset_password(request: Request, token: str = ""):
+    if request.method == "POST":
+        form = await request.form()
+        token = str(form.get("token") or "")
+        password = str(form.get("password") or "")
+        confirmation = str(form.get("confirm_password") or "")
+        if len(password) < 8:
+            return _access_response(request, reset_card(token=token, error="Password must be at least 8 characters."), title="Reset password")
+        if password != confirmation:
+            return _access_response(request, reset_card(token=token, error="Passwords do not match."), title="Reset password")
+        if not accounts.reset_password(token, password):
+            return _access_response(request, reset_card(token=token, error="This reset link is invalid or has expired."), title="Reset password")
+        return _redirect(request, "/auth/sign-in?message=Password+reset+successful.")
+    if not token:
+        return RedirectResponse("/auth/forgot", status_code=303)
+    return _html(access_page(reset_card(token=token), title="Reset password"))
 
 
 @app.get("/auth/google")
 def google_start(request: Request, next: str = "/"):
     if not google_oidc.enabled():
         return RedirectResponse("/auth/sign-in?error=not_configured", status_code=303)
-    safe_next = next if next.startswith("/") and not next.startswith("//") else "/"
+    safe_next = _safe_next(next)
     request.session.clear()
     state = google_oidc.new_state()
     request.session["google_oauth_state"] = state
@@ -187,8 +393,7 @@ def google_callback(request: Request, code: str = "", state: str = "", error: st
         return RedirectResponse("/auth/sign-in?error=account", status_code=303)
     next_path = request.session.pop("post_auth_path", "/")
     user_id = google_oidc.save_user(identity)
-    request.session.clear()
-    request.session["user"] = {"id": user_id, "email": identity["email"], "name": identity["name"]}
+    _login_session(request, {"id": user_id, "email": identity["email"], "name": identity["name"]})
     return RedirectResponse(next_path, status_code=303)
 
 
@@ -198,19 +403,46 @@ def logout(request: Request):
     return RedirectResponse("/auth/sign-in", status_code=303)
 
 
-@app.get("/",response_class=HTMLResponse)
-def index(request: Request):
+@app.get("/auth/unsubscribe", response_class=HTMLResponse)
+def unsubscribe_daily_scan(token: str = ""):
+    email = newsletter.unsubscribe(token) if token else None
+    if email:
+        card = notice_card(
+            "Daily scan paused",
+            "You will no longer receive the FastComps Daily Clinic Market Scan.",
+            action="/auth/sign-in", action_label="Open FastComps",
+        )
+        return _html(access_page(card, title="Daily scan paused"))
+    card = notice_card(
+        "Link unavailable",
+        "This unsubscribe link is invalid. Sign in and contact us if you still need help.",
+        action="/auth/sign-in", action_label="Open FastComps",
+    )
+    return _html(access_page(card, title="Unsubscribe"))
+
+
+def _threads_for(user_id: str) -> list[dict]:
+    try:
+        return repository.chat_threads(user_id)
+    except Exception:
+        return []
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request, thread: str = ""):
     user = request.session["user"]
-    return DASHBOARD_HTML.replace("{{USER_EMAIL}}", escape(user["email"]))
+    threads = _threads_for(user["id"])
+    messages = repository.chat_messages(user["id"], thread) if thread else []
+    return _html(chat_page(user, threads, messages, thread_id=thread))
 
 
-DASHBOARD_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Source-backed competitive intelligence for clinics across the EEA."><title>FastComps · Clinic market intelligence</title><link rel="icon" href="/static/favicon.svg"><link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/market.css"><link rel="stylesheet" href="/static/auth.css"></head><body>
-<header class="topbar"><a class="brand" href="/"><span>F</span>FastComps</a><nav><button data-view="overview" class="nav-button active">Overview</button><button data-view="competitors" class="nav-button">Competitors</button><button data-view="coverage" class="nav-button">Coverage</button><button data-view="evidence" class="nav-button">Evidence</button></nav><div class="header-actions"><label class="market-picker"><span>Market</span><select id="country"><option value="">All EEA</option></select></label><span class="signed-in">{{USER_EMAIL}}</span><a class="sign-in" href="/auth/logout">Sign out</a></div></header>
-<main class="workspace"><section class="content"><div class="intro"><div><p class="eyebrow">CLINICS · COMPETITIVE INTELLIGENCE</p><h1>See the market as evidence, not noise.</h1><p>Track competitors, service portfolios and published prices across 30 EEA markets—each claim linked back to its source.</p></div><div class="sync-pill"><i></i><span id="sync-status">Connecting to evidence base…</span></div></div>
-<section class="metrics" id="metrics"><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article><article class="skeleton"></article></section>
-<section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">MARKET SIGNAL</p><h2>Competitive footprint</h2></div><span class="panel-note">Verified locations only</span></div><div class="overview-grid"><div id="market-map" class="market-map"><div class="map-label">EEA clinic locations</div></div><div><h3>Category depth</h3><div id="categories" class="bar-list"></div></div></div></section>
-<section class="panel view-panel" data-panel="overview"><div class="panel-head"><div><p class="eyebrow">LATEST EVIDENCE</p><h2>Observed services & prices</h2></div><input id="price-search" class="compact-input" placeholder="Filter service or clinic"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Offering</th><th>Price</th><th>Type</th><th>Market</th><th>Evidence</th></tr></thead><tbody id="prices"></tbody></table></div></section>
-<section class="panel view-panel hidden" data-panel="competitors"><div class="panel-head"><div><p class="eyebrow">LANDSCAPE</p><h2>Competitors</h2></div><input id="competitor-search" class="compact-input" placeholder="Search competitors"></div><div class="table-wrap"><table><thead><tr><th>Competitor</th><th>Market</th><th>Locations</th><th>Offerings</th><th>Evidence</th><th>Last observed</th></tr></thead><tbody id="competitors"></tbody></table></div></section>
-<section class="panel view-panel hidden" data-panel="coverage"><div class="panel-head"><div><p class="eyebrow">30 EEA MARKETS</p><h2>Coverage status</h2></div><span class="panel-note">Target: 10 verified competitors / market</span></div><div id="coverage-grid" class="coverage-grid"></div><div class="subpanel-head"><div><p class="eyebrow">CURATED MONITORING</p><h2>Priority watchlist</h2></div></div><div id="watchlist-grid" class="watchlist-grid"></div><div class="subpanel-head"><div><p class="eyebrow">DISCOVERY PIPELINE</p><h2>Candidate queue</h2></div><span class="panel-note">Every lead retained for review</span></div><div class="table-wrap"><table><thead><tr><th>Candidate</th><th>Market</th><th>State</th><th>Sources</th><th>Last seen</th></tr></thead><tbody id="candidates"></tbody></table></div></section>
-<section class="panel view-panel hidden" data-panel="evidence"><div class="panel-head"><div><p class="eyebrow">SOURCE REGISTER</p><h2>Recent evidence</h2></div><span class="panel-note">Retained snapshots</span></div><div id="evidence-list" class="evidence-list"></div><div class="subpanel-head"><div><p class="eyebrow">COLLECTION HISTORY</p><h2>Recent runs</h2></div></div><div class="table-wrap"><table><thead><tr><th>Run</th><th>Trigger</th><th>Status</th><th>Started</th><th>Result</th></tr></thead><tbody id="runs"></tbody></table></div></section></section>
-<aside class="assistant"><div class="assistant-head"><div class="assistant-mark">✦</div><div><p class="eyebrow">FASTCOMPS AI</p><h2>Evidence analyst</h2></div><span class="live-dot">LIVE</span></div><div id="assistant-feed" class="assistant-feed" aria-live="polite"><div class="assistant-message"><p>Ask about competitors, coverage, services or prices. I’ll stream a governed analysis and keep its evidence visible.</p></div><div class="suggestions"><button>Which markets need attention?</button><button>Compare clinic pricing in Lithuania</button><button>Where is IV therapy observed?</button></div></div><form id="assistant-form" class="assistant-form"><textarea id="question" rows="2" maxlength="500" placeholder="Ask about this market…" required></textarea><button aria-label="Send question">↑</button></form><p class="assistant-foot">Read-only governed analytics · No SQL exposed</p></aside></main><script src="/static/app.js" defer></script></body></html>"""
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request):
+    user = request.session["user"]
+    return _html(dashboard_page(user, _threads_for(user["id"])))
+
+
+@app.get("/developers", response_class=HTMLResponse)
+def developers(request: Request):
+    user = request.session["user"]
+    return _html(developer_page(user, _threads_for(user["id"])))

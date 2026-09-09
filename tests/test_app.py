@@ -35,24 +35,85 @@ def signed_in(monkeypatch):
     return client
 
 
-def test_dashboard_contract(signed_in):
+def test_chat_workspace_contract(signed_in):
     response = signed_in.get("/")
     assert response.status_code == 200
     assert "FastComps" in response.text
-    assert "Evidence analyst" in response.text
+    assert "New Chat" in response.text
+    assert "What do you want to know about the clinic market?" in response.text
+    assert "/static/chat.js" in response.text
+    assert "Evidence analyst" not in response.text
     assert "analyst@example.com" in response.text
     assert "Sign out" in response.text
+
+
+def test_dashboard_contract(signed_in):
+    response = signed_in.get("/dashboard")
+    assert response.status_code == 200
+    assert "Evidence analyst" in response.text
     assert "30 EEA MARKETS" in response.text
     assert "Priority watchlist" in response.text
     assert "Candidate queue" in response.text
     assert "COLLECTION HISTORY" in response.text
+    assert "Country → treatment type → treatment" in response.text
+    assert "treatment-treemap" in response.text
+
+
+def test_developer_portal_contract(signed_in):
+    response = signed_in.get("/developers")
+    assert response.status_code == 200
+    assert "Build with source-backed clinic intelligence" in response.text
+    assert "/api/docs" in response.text
+    assert "/api/redoc" in response.text
+    assert "/api/openapi/v1.json" in response.text
+    assert "Streaming event contract" in response.text
 
 
 def test_sign_in_offers_google():
     response = client.get("/auth/sign-in")
     assert response.status_code == 200
     assert "Continue with Google" in response.text
+    assert "Create an account" in response.text
+    assert "Forgot password?" in response.text
+    assert 'hx-post="/auth/sign-in?next=/"' in response.text
     assert "openid" not in response.text
+
+
+def test_signup_form_uses_htmx_and_sends_verification(monkeypatch):
+    sent = []
+    monkeypatch.setattr(main.accounts, "create_user", lambda *args: {"id": "user-2"})
+    monkeypatch.setattr(main.accounts, "create_token", lambda *args, **kwargs: "opaque-token")
+    monkeypatch.setattr(main.accounts, "send_account_email", lambda email, **kwargs: sent.append((email, kwargs)) or True)
+    response = client.post(
+        "/auth/sign-up",
+        data={"name": "Market Analyst", "email": "ANALYST@example.com", "password": "password123"},
+        headers={"HX-Request": "true"},
+    )
+    assert response.status_code == 200
+    assert "Check your email" in response.text
+    assert "<html" not in response.text
+    assert sent[0][0] == "analyst@example.com"
+    assert sent[0][1]["purpose"] == "verify_email"
+
+
+def test_email_signin_htmx_redirect(monkeypatch):
+    monkeypatch.setattr(main.accounts, "authenticate", lambda *_: ({"id": "user-3", "email": "a@example.com", "name": "A"}, None))
+    response = client.post(
+        "/auth/sign-in?next=/dashboard",
+        data={"email": "a@example.com", "password": "password123"},
+        headers={"HX-Request": "true"},
+    )
+    assert response.status_code == 200
+    assert response.headers["hx-redirect"] == "/dashboard"
+
+
+def test_forgot_password_is_non_enumerating(monkeypatch):
+    monkeypatch.setattr(main.accounts, "user_for_email", lambda *_: None)
+    response = client.post(
+        "/auth/forgot", data={"email": "missing@example.com"}, headers={"HX-Request": "true"}
+    )
+    assert response.status_code == 200
+    assert "If that email is registered" in response.text
 
 
 def test_unauthenticated_workspace_and_api_are_gated():
@@ -95,6 +156,12 @@ def test_read_endpoints_delegate(monkeypatch, signed_in):
     monkeypatch.setattr(main.repository,"competitors",lambda *args: [{"name":"Clinic"}])
     assert signed_in.get("/api/coverage").json()[0]["country_code"] == "EE"
     assert signed_in.get("/api/competitors").json()[0]["name"] == "Clinic"
+
+
+def test_treemap_endpoint_delegates(monkeypatch, signed_in):
+    monkeypatch.setattr(main.repository, "treatment_treemap", lambda country, limit: [{"country_code": country, "limit": limit}])
+    response = signed_in.get("/api/treemap?country=lt&limit=42")
+    assert response.json() == [{"country_code": "LT", "limit": 42}]
 
 
 def test_operational_read_endpoints(monkeypatch, signed_in):

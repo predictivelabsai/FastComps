@@ -12,10 +12,11 @@ import os
 import socket
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from psycopg2.extras import RealDictCursor
 
-from config import SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS
+from config import DAILY_SCAN_ENABLED, DAILY_SCAN_HOUR_UTC, SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS
 from db import SCHEMA, connection, init_db
 from migration import sync_fastclinic
 
@@ -49,6 +50,9 @@ def process_one_job() -> bool:
     try:
         if job["job_type"] == "sync_fastclinic":
             sync_fastclinic()
+        elif job["job_type"] == "daily_scan":
+            from newsletter import send_daily_scan_to_all
+            send_daily_scan_to_all()
         else:
             raise ValueError(f"Unsupported job type: {job['job_type']}")
         with connection() as conn, conn.cursor() as cur:
@@ -63,6 +67,10 @@ def process_one_job() -> bool:
 def run_forever() -> None:
     init_db()
     next_sync = 0.0
+    now_utc = datetime.now(timezone.utc)
+    next_scan = now_utc.replace(hour=DAILY_SCAN_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if next_scan <= now_utc:
+        next_scan += timedelta(days=1)
     while True:
         if not acquire_lease():
             time.sleep(WORKER_POLL_SECONDS); continue
@@ -73,6 +81,14 @@ def run_forever() -> None:
             except Exception:
                 log.exception("Scheduled FastClinic sync failed")
             next_sync = time.monotonic() + SYNC_INTERVAL_SECONDS
+        if DAILY_SCAN_ENABLED and datetime.now(timezone.utc) >= next_scan:
+            try:
+                from newsletter import send_daily_scan_to_all
+                result = send_daily_scan_to_all()
+                log.info("Daily scan sent=%s/%s", result.get("sent"), result.get("total"))
+            except Exception:
+                log.exception("Scheduled daily scan failed")
+            next_scan += timedelta(days=1)
         if not process_one_job():
             time.sleep(WORKER_POLL_SECONDS)
 

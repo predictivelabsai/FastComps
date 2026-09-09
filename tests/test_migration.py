@@ -16,7 +16,7 @@ def test_complete_market_subsystem_is_mirrored():
 
 
 def test_operational_tables_have_generic_destinations():
-    for table in ("vertical_settings","address_attempts","geocode_cache","geocode_gates","provider_credentials","users","user_sessions","api_keys"):
+    for table in ("vertical_settings","address_attempts","geocode_cache","geocode_gates","provider_credentials","users","account_tokens","newsletter_deliveries","user_sessions","api_keys"):
         assert f"fast_comps.{table}" in DDL
 
 

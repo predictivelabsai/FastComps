@@ -2,11 +2,11 @@
 
 Source-backed competitive intelligence for clinics across all 30 EEA markets.
 
-FastComps is a dashboard-first application with a persistent evidence analyst. It shares FastClinic's PostgreSQL server but owns the isolated `fast_comps` schema. FastClinic remains the system collecting its Market data; FastComps mirrors all 18 Market tables losslessly and projects them into an extensible model for verticals, competitors, locations, categories, services/products, observations, sources, candidates, campaigns and watchlists.
+FastComps is a chat-first application with a separate evidence dashboard. It shares FastClinic's PostgreSQL server but owns the isolated `fast_comps` schema. FastClinic remains the system collecting its Market data; FastComps mirrors all 18 Market tables losslessly and projects them into an extensible model for verticals, competitors, locations, categories, services/products, observations, sources, candidates, campaigns and watchlists.
 
 ## Architecture
 
-- `web`: Google-authenticated read-only dashboard/API on port 5063.
+- `web`: FastHTML/HTMX chat, dashboard, account access and developer portal, plus a governed read-only FastAPI surface on port 5063.
 - `worker`: independent lease-protected worker, currently synchronizing FastClinic every five minutes and able to process durable FastComps jobs.
 - `fast_clinic` schema: read-only source.
 - `fast_comps` schema: application-owned schema and `legacy_*` mirrors.
@@ -25,7 +25,27 @@ python migration.py
 uvicorn main:app --host 0.0.0.0 --port 5063
 ```
 
-Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic evidence summaries. Google sign-in uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and a strong, randomly generated `SESSION_SECRET`; startup fails if the session secret is absent.
+Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` enables generated assistant answers; without it, the assistant returns deterministic evidence summaries. Google sign-in uses `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`. Email/password registration and recovery use `POSTMARK_API_TOKEN` and `FROM_EMAIL`. A strong, randomly generated `SESSION_SECRET` is mandatory.
+
+## Product surfaces
+
+- `/`: central streamed conversation workspace with persisted per-user chat history.
+- `/dashboard`: market overview, competitor, coverage and evidence views; this is the only surface with the compact Evidence Analyst.
+- `/dashboard`: Plotly treemap with country → treatment type → treatment hierarchy, observation-based area and within-country/currency relative price colour.
+- `/developers`: developer guide, API resource catalogue, quick starts and links to Swagger, ReDoc and versioned OpenAPI documents.
+- `/auth/sign-up`, `/auth/sign-in`, `/auth/forgot`, `/auth/reset`: FastHTML account flows enhanced with HTMX; Google OIDC remains available.
+
+## Daily Clinic Market Scan
+
+The worker sends a Superia-inspired daily email at `DAILY_SCAN_HOUR_UTC` (07:00 UTC by default). It summarizes fresh source-backed observations, active competitors and markets, retained sources, readable evidence links, and the markets with the largest coverage gaps. Delivery is deduplicated per user/day and every message includes a signed unsubscribe link.
+
+```bash
+python -m scripts.daily_scan --dry-run
+python -m scripts.daily_scan --to analyst@example.com
+python -m scripts.daily_scan --all
+```
+
+Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling the collection worker.
 
 ## API
 
@@ -36,14 +56,16 @@ Or run both processes with `docker compose up --build`. Optional `XAI_API_KEY` e
 - `GET /api/observations`
 - `GET /api/locations`
 - `GET /api/categories`
+- `GET /api/treemap`
 - `GET /api/evidence`
 - `GET /api/candidates`
 - `GET /api/watchlist`
 - `GET /api/runs`
 - `POST /api/assistant`
 - `POST /api/assistant/stream` (SSE progress, governed analysis, inline visual data and citations)
+- `GET /api/threads` and `GET /api/threads/{thread_id}`
 
-The dashboard and API require a signed Google session; `/healthz`, static assets, and the authentication routes remain public. Mutation routes are intentionally absent.
+The workspaces and API require a signed session. Users can authenticate with Google or a verified email/password account; `/healthz`, static assets, and the account access routes remain public. Market mutation routes are intentionally absent.
 
 Conversational analytics never accepts or exposes SQL. The model can select only an allowlisted metric, dimension and bounded filters; FastComps compiles the PostgreSQL internally, runs it in a read-only transaction with a five-second statement timeout, and returns aggregate results with coverage and retained-source context.
 

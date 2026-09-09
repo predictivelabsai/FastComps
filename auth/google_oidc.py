@@ -125,12 +125,13 @@ def exchange_google_code(code: str) -> dict[str, str] | None:
 def save_user(identity: dict[str, str]) -> str:
     with connection() as conn, conn.cursor() as cur:
         cur.execute(
-            f"""INSERT INTO {SCHEMA}.users (email,name)
-                VALUES (%(email)s,%(name)s)
+            f"""INSERT INTO {SCHEMA}.users (email,name,google_sub,email_verified)
+                VALUES (%(email)s,%(name)s,%(sub)s,TRUE)
                 ON CONFLICT (email) DO UPDATE SET
-                  name=COALESCE(NULLIF(EXCLUDED.name,''),{SCHEMA}.users.name)
+                  name=COALESCE(NULLIF(EXCLUDED.name,''),{SCHEMA}.users.name),
+                  google_sub=EXCLUDED.google_sub,email_verified=TRUE,updated_at=NOW()
                 RETURNING id""",
-            {"email": identity["email"], "name": identity.get("name")},
+            {"email": identity["email"], "name": identity.get("name"), "sub": identity["sub"]},
         )
         user_id = str(cur.fetchone()[0])
         conn.commit()
