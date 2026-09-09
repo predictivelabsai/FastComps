@@ -78,7 +78,12 @@ def test_daily_scan_page_contract(monkeypatch, signed_in):
     assert response.status_code == 200
     assert "Daily evidence scan" in response.text
     assert "Clinic A" in response.text and "Clinic B" in response.text
-    assert "data:image/png;base64," in response.text
+    assert 'id="daily-scan-treemap"' in response.text
+    assert 'id="daily-scan-data"' in response.text
+    assert 'type="application/json"' in response.text
+    assert "/static/daily_scan.js" in response.text
+    assert "plotly-2.35.2.min.js" in response.text
+    assert "data:image/png;base64," not in response.text
     assert 'href="/daily-scan" class="side-link active"' in response.text
     assert "Evidence analyst" not in response.text
 

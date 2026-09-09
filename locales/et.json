@@ -302,5 +302,9 @@
   "HIGHEST": "KÕRGEIM",
   "No comparable cross-clinic price signals are available yet.": "Võrreldavaid kliinikutevahelisi hinnasignaale pole veel saadaval.",
   "Comparable published prices across {count} clinics": "Võrreldavad avaldatud hinnad {count} kliinikus",
-  "{count} cross-clinic comparisons": "{count} kliinikutevahelist võrdlust"
+  "{count} cross-clinic comparisons": "{count} kliinikutevahelist võrdlust",
+  "Loading daily treemap…": "Laadin päevaseire puukaarti…",
+  "Select a treatment tile to open its matching clinic comparison.": "Vali raviteenuse paan, et avada vastav kliinikute võrdlus.",
+  "Lower EUR price level": "Madalam EUR hinnatase",
+  "Higher EUR price level": "Kõrgem EUR hinnatase"
 }

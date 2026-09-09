@@ -15,9 +15,14 @@
 .scan-panel-head { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 20px; justify-content: space-between; padding: 20px 22px; }
 .scan-panel-head h2 { font: 500 24px Georgia,serif; letter-spacing: -.02em; margin: 0; }
 .scan-panel-note { color: var(--muted); font-size: 11px; }
-.scan-map { display: block; height: auto; padding: 20px; width: 100%; }
+.scan-treemap { height: 590px; padding: 12px; width: 100%; }
+.scan-legend { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 10px; justify-content: center; padding: 0 20px 14px; }
+.scan-gradient { background: linear-gradient(90deg,#2c9976,#efbf53,#ca5c49); border-radius: 999px; height: 7px; max-width: 260px; width: 34%; }
+.scan-drill-note { border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; margin: 0; padding: 12px 22px; }
 .scan-grid { display: grid; gap: 12px; grid-template-columns: repeat(2,minmax(0,1fr)); padding: 18px; }
 .scan-card { border: 1px solid var(--line); border-radius: 12px; min-width: 0; padding: 16px; }
+.scan-card.highlight { animation: scan-highlight 1.6s ease; }
+@keyframes scan-highlight { 0%,100% { box-shadow: none; } 35% { border-color: #42a980; box-shadow: 0 0 0 5px #dff4e9; } }
 .scan-card-meta { align-items: center; display: flex; gap: 9px; justify-content: space-between; }
 .scan-market { color: var(--green); font-size: 11px; font-weight: 800; letter-spacing: .05em; white-space: nowrap; }
 .scan-type { color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -36,7 +41,7 @@
   .scan-metrics { grid-template-columns: repeat(2,1fr); }
   .scan-panel-head { align-items: flex-start; flex-direction: column; }
   .scan-grid { grid-template-columns: 1fr; padding: 12px; }
-  .scan-map { padding: 10px; }
+  .scan-treemap { height: 470px; padding: 6px; }
 }
 @media(max-width:480px){
   .scan-topbar > div { display: block; }

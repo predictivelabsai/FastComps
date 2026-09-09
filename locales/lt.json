@@ -302,5 +302,9 @@
   "HIGHEST": "DIDŽIAUSIA",
   "No comparable cross-clinic price signals are available yet.": "Palyginamų skirtingų klinikų kainų signalų kol kas nėra.",
   "Comparable published prices across {count} clinics": "Palyginamos paskelbtos kainos {count} klinikose",
-  "{count} cross-clinic comparisons": "{count} klinikų palyginimų"
+  "{count} cross-clinic comparisons": "{count} klinikų palyginimų",
+  "Loading daily treemap…": "Įkeliamas dienos apžvalgos medžio žemėlapis…",
+  "Select a treatment tile to open its matching clinic comparison.": "Pasirinkite procedūros lauką, kad atvertumėte atitinkamą klinikų palyginimą.",
+  "Lower EUR price level": "Žemesnis EUR kainų lygis",
+  "Higher EUR price level": "Aukštesnis EUR kainų lygis"
 }

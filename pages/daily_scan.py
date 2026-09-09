@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import base64
+import json
 from datetime import date
 from urllib.parse import urlsplit
 
 from fasthtml.common import (
-    A, Article, Div, H1, H2, Header, Img, Main, P, Section, Small, Span,
-    Strong,
+    A, Article, Div, H1, H2, Header, Main, NotStr, P, Script, Section, Small,
+    Span, Strong,
 )
 
 from components.shell import app_page, mobile_menu
 from i18n import t
-from market_map import render_market_map_png
 
 
 def _safe_url(value: str | None) -> str | None:
@@ -51,7 +50,6 @@ def _endpoint(label: str, clinic: str | None, price, source_url: str | None):
 
 def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = "en"):
     signals = scan.get("signals") or []
-    png = base64.b64encode(render_market_map_png(scan)).decode("ascii")
     stats = scan.get("stats") or {}
     scan_date = date.fromisoformat(scan["date"]).strftime("%d %b %Y")
 
@@ -69,9 +67,9 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
             ),
             _endpoint("LOWEST", row.get("lowest_clinic"), row.get("lowest_price"), row.get("lowest_source_url")),
             _endpoint("HIGHEST", row.get("highest_clinic"), row.get("highest_price"), row.get("highest_source_url")),
-            cls="scan-card",
+            id=f"scan-signal-{index}", cls="scan-card",
         )
-        for row in signals
+        for index, row in enumerate(signals)
     )
     metrics = tuple(
         Div(Strong(f"{int(value or 0):,}"), Small(label), cls="scan-metric")
@@ -106,11 +104,13 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
                     Span("All displayed prices are converted to EUR", cls="scan-panel-note"),
                     cls="scan-panel-head",
                 ),
-                Img(
-                    src=f"data:image/png;base64,{png}",
-                    alt="Daily country, treatment type and treatment price map",
-                    cls="scan-map",
+                Div(P("Loading daily treemap…", cls="scan-empty"), id="daily-scan-treemap", cls="scan-treemap"),
+                Div(
+                    Span("Lower EUR price level"), Span(cls="scan-gradient"), Span("Higher EUR price level"),
+                    cls="scan-legend",
                 ),
+                P("Select a treatment tile to open its matching clinic comparison.", cls="scan-drill-note"),
+                Script(NotStr(json.dumps(signals, default=str, ensure_ascii=False).replace("</", "<\\/")), id="daily-scan-data", type="application/json"),
                 cls="scan-panel",
             ),
             Section(
@@ -128,5 +128,7 @@ def daily_scan_page(user: dict, threads: list[dict], scan: dict, *, lang: str = 
     )
     return app_page(
         "Daily Scan", content, user=user, threads=threads, active="daily-scan",
-        styles=("/static/daily_scan.css",), lang=lang,
+        styles=("/static/daily_scan.css",),
+        scripts=("https://cdn.plot.ly/plotly-2.35.2.min.js", "/static/daily_scan.js"),
+        lang=lang,
     )
