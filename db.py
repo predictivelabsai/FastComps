@@ -270,9 +270,8 @@ def init_db() -> None:
             FROM {SCHEMA}.markets ON CONFLICT (vertical_id,country_code) DO NOTHING""")
         cur.execute(f"""INSERT INTO {SCHEMA}.exchange_rates
             (currency,units_per_eur,effective_date,source_url)
-            VALUES ('EUR',1,CURRENT_DATE,'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml')
-            ON CONFLICT (currency) DO UPDATE SET units_per_eur=1,
-              effective_date=EXCLUDED.effective_date,source_url=EXCLUDED.source_url,updated_at=NOW()""")
+            VALUES ('EUR',1,DATE '1970-01-01','https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml')
+            ON CONFLICT (currency) DO NOTHING""")
         conn.commit()
 
 
