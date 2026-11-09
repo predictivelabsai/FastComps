@@ -401,7 +401,9 @@ def send_daily_scan(to_email: str, *, scan: dict | None = None, record: bool = F
         return {"ok": False, "error": "POSTMARK_API_TOKEN is not configured"}
     scan = scan or build_daily_scan()
     market_map_png = render_market_map_png(scan)
-    subject = f"Daily Clinic Market Scan · FastComps — {date.today().strftime('%d %b %Y')}"
+    from config import DAILY_SCAN_FREQUENCY
+    cadence = "Weekly" if DAILY_SCAN_FREQUENCY == "weekly" else "Daily"
+    subject = f"{cadence} Clinic Market Scan · FastComps — {date.today().strftime('%d %b %Y')}"
     try:
         response = httpx.post(
             "https://api.postmarkapp.com/email",

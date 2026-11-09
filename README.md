@@ -48,7 +48,7 @@ python -m scripts.daily_scan --to analyst@example.com
 python -m scripts.daily_scan --all
 ```
 
-Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling the collection worker.
+Set `DAILY_SCAN_ENABLED=false` to disable the scheduled send without disabling the collection worker. Set `DAILY_SCAN_FREQUENCY=weekly` (with `DAILY_SCAN_WEEKDAY`, 0=Mon) to send once a week at the same local hour; production uses weekly on Monday.
 
 ## API
 

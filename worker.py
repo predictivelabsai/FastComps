@@ -19,6 +19,7 @@ from psycopg2.extras import RealDictCursor
 
 from config import (
     DAILY_SCAN_ENABLED, DAILY_SCAN_HOUR_LOCAL, DAILY_SCAN_TIMEZONE,
+    DAILY_SCAN_FREQUENCY, DAILY_SCAN_WEEKDAY,
     SYNC_INTERVAL_SECONDS, WORKER_POLL_SECONDS,
 )
 from db import SCHEMA, connection, init_db
@@ -30,15 +31,26 @@ log = logging.getLogger("fastcomps.worker")
 OWNER = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
-def next_daily_scan(now_utc: datetime) -> datetime:
-    """Return the next 08:00 Europe/Vilnius send, including DST changes."""
+def next_daily_scan(now_utc: datetime, frequency: str | None = None,
+                    weekday: int | None = None) -> datetime:
+    """Return the next 08:00 Europe/Vilnius send, including DST changes.
+
+    With DAILY_SCAN_FREQUENCY=weekly the send only happens on
+    DAILY_SCAN_WEEKDAY (0=Mon) at the same local hour.
+    """
+    frequency = (frequency or DAILY_SCAN_FREQUENCY).lower()
+    weekday = DAILY_SCAN_WEEKDAY if weekday is None else weekday
     zone = ZoneInfo(DAILY_SCAN_TIMEZONE)
     local_now = now_utc.astimezone(zone)
     local_day: date = local_now.date()
-    candidate = datetime.combine(local_day, clock_time(DAILY_SCAN_HOUR_LOCAL), tzinfo=zone)
-    if candidate <= local_now:
-        candidate = datetime.combine(local_day + timedelta(days=1), clock_time(DAILY_SCAN_HOUR_LOCAL), tzinfo=zone)
-    return candidate.astimezone(timezone.utc)
+    for offset in range(0, 8):
+        day = local_day + timedelta(days=offset)
+        if frequency == "weekly" and day.weekday() != weekday:
+            continue
+        candidate = datetime.combine(day, clock_time(DAILY_SCAN_HOUR_LOCAL), tzinfo=zone)
+        if candidate > local_now:
+            return candidate.astimezone(timezone.utc)
+    raise RuntimeError("unreachable: no scan slot within 8 days")
 
 
 def acquire_lease(seconds: int = 90) -> bool:
